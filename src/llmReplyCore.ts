@@ -1,36 +1,36 @@
 import joplin from '../api';
 import { get_txt_by_locale } from './texts';
 import { get_llm_options } from './llmConf';
-import { 
-    FLOATING_HTML_BASIC, FLOATING_HTML_THINKING, FLOATING_HTML_WAITING, 
-    COLOR_FLOAT, makeJumpingHtml, FloatProgressAnimator, 
+import {
+    FLOATING_HTML_BASIC, FLOATING_HTML_THINKING, FLOATING_HTML_WAITING,
+    COLOR_FLOAT, makeJumpingHtml, FloatProgressAnimator,
     add_short_floating, get_random_floatid
 } from './pluginFloatingObject';
 import { mcp_call_tool, mcp_get_tools, mcp_get_tools_openai, get_mcp_prompt } from './mcpClient';
 
 // 
 /**
- * 滚动条移动到光标位置
+ * Scroll the view to the cursor position
  */
-export async function scroll_to_view (mode:string='none') {
-    if (mode === 'desktop'){  					
+export async function scroll_to_view(mode: string = 'none') {
+    if (mode === 'desktop') {
         await joplin.commands.execute('editor.execCommand', {
-            name: 'cm-moveCursorToSelectionEnd' 
+            name: 'cm-moveCursorToSelectionEnd'
         });
     }
-    else if (mode === 'mobile'){        
+    else if (mode === 'mobile') {
         await joplin.commands.execute('editor.execCommand', {
-            name: 'cm-scrollToCursor' 
+            name: 'cm-scrollToCursor'
         });
     }
-    else{
-        // 其他的不做任何事情
+    else {
+        // Do nothing for other modes
     }
 }
 
-function formatDateTime(date:Date) {
+function formatDateTime(date: Date) {
     const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0'); // 月份从0开始，需+1
+    const month = String(date.getMonth() + 1).padStart(2, '0'); // Month is 0-indexed, so +1
     const day = String(date.getDate()).padStart(2, '0');
     const hours = String(date.getHours()).padStart(2, '0');
     const minutes = String(date.getMinutes()).padStart(2, '0');
@@ -45,99 +45,99 @@ function formatNow() {
 }
 
 /**
- * 计算字符串 A 的尾部与字符串 B 的头部的重叠长度
+ * Calculate the overlap length between the tail of string A and the head of string B
  * @param strA 
  * @param strB 
- * @returns 重叠长度 int
- */ 
+ * @returns Overlap length as integer
+ */
 function getOverlapLength(strA: string, strB: string): number {
-  // 1. 最大可能的重叠长度受限于两个字符串中较短的那个
-  const maxOverlap = Math.min(strA.length, strB.length);
-  // 2. 从最大长度开始递减，寻找 A 的后缀与 B 的前缀是否相等
-  for (let n = maxOverlap; n > 0; n--) {
-    const suffixA = strA.slice(-n); // A 的最后 n 个字符
-    const prefixB = strB.slice(0, n); // B 的前 n 个字符
-    if (suffixA === prefixB) {
-      return n; // 找到最大匹配，立即返回
+    // 1. Maximum possible overlap is limited by the shorter of the two strings
+    const maxOverlap = Math.min(strA.length, strB.length);
+    // 2. Iterate from max length downward, checking if A's suffix equals B's prefix
+    for (let n = maxOverlap; n > 0; n--) {
+        const suffixA = strA.slice(-n); // Last n characters of A
+        const prefixB = strB.slice(0, n); // First n characters of B
+        if (suffixA === prefixB) {
+            return n; // Found maximum match, return immediately
+        }
     }
-  }
-  // 3. 没有任何后缀与前缀匹配
-  return 0;
+    // 3. No suffix-prefix match found
+    return 0;
 }
 //
 /**
- * 检查服务器状态是否可用
- * @param {string} url 要检查的服务器地址
- * @param {number} [timeout=1000] 超时时间，单位为毫秒
+ * Check if the server is available
+ * @param {string} url Server address to check
+ * @param {number} [timeout=1000] Timeout in milliseconds
  * @returns {Promise<{status: 'online' | 'offline' | 'timeout' | 'error', message: string}>}
  */
-async function checkServerStatus(url:string, 
+async function checkServerStatus(url: string,
     timeout: number = 1000): Promise<{ status: 'online' | 'offline' | 'timeout' | 'error'; message: string; }> {
     //
-    // AbortController 是实现超时的关键
+    // AbortController is key to implementing timeout
     const controller = new AbortController();
     const signal = controller.signal;
 
-    // 设置一个计时器，在超时后中止 fetch 请求
+    // Set a timer to abort the fetch request after timeout
     const timeoutId = setTimeout(() => {
-        console.log(`请求 ${url} 超时。`);
+        console.log(`Request to ${url} timed out.`);
         controller.abort();
     }, timeout);
 
     try {
-        // 发起 fetch 请求
-        // 我们使用 'HEAD' 方法，因为它只获取响应头，速度最快。
-        // 'no-cors' 模式可以避免一些跨域问题，但请注意下面的“重要提示”。
+        // Initiate fetch request
+        // We use 'HEAD' method because it only fetches response headers, which is fastest.
+        // 'no-cors' mode can avoid some cross-origin issues, but see important notes below.
         const response = await fetch(url, {
-            method: 'HEAD', // 使用 HEAD 方法，只请求头信息，速度快
-            mode: 'no-cors', // 使用 no-cors 模式来“测试”连通性，即使有跨域限制
-            signal: signal   // 将 AbortSignal 传递给 fetch
+            method: 'HEAD', // Use HEAD method, only requests headers, fast
+            mode: 'no-cors', // Use no-cors mode to test connectivity even with CORS restrictions
+            signal: signal   // Pass AbortSignal to fetch
         });
 
-        // 如果请求成功，清除超时计时器
+        // If request succeeds, clear the timeout timer
         clearTimeout(timeoutId);
 
-        // 对于 'no-cors' 模式，我们无法读取 response.status 或 response.ok
-        // 只要请求没有抛出错误，就认为网络层面是可达的。
-        // 这是一个基本的连通性检查。
+        // For 'no-cors' mode, we cannot read response.status or response.ok
+        // As long as the request doesn't throw an error, we consider it reachable at network level.
+        // This is a basic connectivity check.
         return {
             status: 'online',
-            message: `服务器 ${url} 在网络上可达。`
+            message: `Server ${url} is reachable on the network.`
         };
 
     } catch (err) {
-        // 清除超时计时器，以防万一
+        // Clear the timeout timer just in case
         clearTimeout(timeoutId);
 
-        // 判断错误类型
+        // Determine error type
         if (err.name === 'AbortError') {
-        return {
-            status: 'timeout',
-            message: `连接服务器 ${url} 超时 (超过 ${timeout}ms)。`
-        };
+            return {
+                status: 'timeout',
+                message: `Connection to server ${url} timed out (exceeded ${timeout}ms).`
+            };
         }
-        
-        // 其他网络错误 (例如 DNS 查找失败, 服务器拒绝连接等)
+
+        // Other network errors (e.g., DNS lookup failed, server refused connection, etc.)
         return {
             status: 'offline',
-            message: `无法连接到服务器 ${url}。错误: ${err.message}`
+            message: `Unable to connect to server ${url}. Error: ${err.message}`
         };
     }
 }
 
 /**
- * 创建一个延迟函数，让出控制权
+ * Create a delay function that yields control
  * 
- * 参数是延迟的毫秒数
+ * @param ms Delay in milliseconds
  */
-function sleep_ms(ms:number) {
+function sleep_ms(ms: number) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 //
 /**
- * 获取光标的位置
- * @returns 类似于这样的字典：{
+ * Get the cursor position
+ * @returns A dictionary like: {
     "startPosition": {
         "line": 1,
         "column": 0
@@ -146,7 +146,7 @@ function sleep_ms(ms:number) {
         "from": 0,
         "to": 50,
         "number": 1,
-        "text": "行内容"
+        "text": "line content"
     },
     "startCol": 0,
     "endPosition": {
@@ -157,14 +157,14 @@ function sleep_ms(ms:number) {
         "from": 0,
         "to": 50,
         "number": 1,
-        "text": "行内容"
+        "text": "line content"
     },
     "endCol": 0
 }
  */
 async function get_cursor_pos() {
     let tmp_cur = await joplin.commands.execute('editor.execCommand', {
-        name: 'cm-getCursorPos' 
+        name: 'cm-getCursorPos'
     });
     return tmp_cur;
 }
@@ -174,7 +174,7 @@ async function get_cursor_pos() {
  * For chat only. 
  * Split long text to dialog list, including role and content.
  */
-export function splitTextToMessages(raw:string, remove_think:boolean=true) {
+export function splitTextToMessages(raw: string, remove_think: boolean = true) {
 
     const lines = raw.split(/\r?\n/);
     // let remove_think = true;
@@ -184,66 +184,66 @@ export function splitTextToMessages(raw:string, remove_think:boolean=true) {
     let inResponse = false;
     let responder = null;
 
-    // 辅助函数：将 buffer 合并入 result
-    function flushBuffer(role:string) {
-      if (buffer.length === 0) return;
-      const content = buffer.join('\n');
-      // 合并到 result，如果上一个的 role 相同
-      if (result.length > 0 && result[result.length - 1].role === role) {
-        result[result.length - 1].content += '\n' + content;
-      } else {
-        result.push({ role, content });
-      }
-      buffer = [];
+    // Helper function: merge buffer into result
+    function flushBuffer(role: string) {
+        if (buffer.length === 0) return;
+        const content = buffer.join('\n');
+        // Merge into result if the previous role is the same
+        if (result.length > 0 && result[result.length - 1].role === role) {
+            result[result.length - 1].content += '\n' + content;
+        } else {
+            result.push({ role, content });
+        }
+        buffer = [];
     }
 
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+        const line = lines[i];
 
-      // 检查开始标记
-      const startMatch = line.match(/^\*\*Response from (.+):\*\*$/);
-      if (startMatch) {
-        // 先flush之前的内容
-        flushBuffer(currentRole);
+        // Check for start marker
+        const startMatch = line.match(/^\*\*Response from (.+):\*\*$/);
+        if (startMatch) {
+            // Flush previous content first
+            flushBuffer(currentRole);
 
-        // 启动新的包裹
-        inResponse = true;
-        responder = startMatch[1].trim();
-        // currentRole = responder;
-        currentRole = "assistant";
-        continue;
-      }
+            // Start new wrapper
+            inResponse = true;
+            responder = startMatch[1].trim();
+            // currentRole = responder;
+            currentRole = "assistant";
+            continue;
+        }
 
-      // 检查结束标记
-      if (line.trim() === '\*\*End of response\*\*') {
-        flushBuffer(currentRole);
-        inResponse = false;
-        responder = null;
-        currentRole = "user";
-        continue;
-      }
+        // Check for end marker
+        if (line.trim() === '\*\*End of response\*\*') {
+            flushBuffer(currentRole);
+            inResponse = false;
+            responder = null;
+            currentRole = "user";
+            continue;
+        }
 
-      // 处理内容
-      buffer.push(line);
+        // Process content
+        buffer.push(line);
     }
 
-    // 处理最后残留
+    // Process remaining content
     flushBuffer(currentRole);
 
-    // 去除纯空内容
+    // Remove purely empty content
     // const cleanResult = result.filter(item => item.content.trim() !== '');
 
-    // 移除 <think> </think> 部分 
-    // TODO 正文如果出现 <think> </think>，可能会存在 bug，不过严格来说并不影响显示，所以先观察试试
-    if(remove_think && result.length > 0){
+    // Remove <think> </think> sections 
+    // TODO: If <think> </think> appears in body text, there may be a bug, but it doesn't affect display, so observing for now
+    if (remove_think && result.length > 0) {
         for (let i = 0; i < result.length; i++) {
-            if (result[i].role === "assistant"){
+            if (result[i].role === "assistant") {
                 let content = result[i].content;
-                // let content_without_think = content.trim().replace(/^<think>[\s\S]*?<\/think>/, '').trimStart();  // 只处理第一个
-                let content_without_think = content.trim().replace(/<think>[\s\S]*?<\/think>/g, '').trimStart();  // g 代表全替换
+                // let content_without_think = content.trim().replace(/^<think>[\s\S]*?<\/think>/, '').trimStart();  // Only process the first one
+                let content_without_think = content.trim().replace(/<think>[\s\S]*?<\/think>/g, '').trimStart();  // g means global replacement
                 result[i].content = content_without_think;
-            } 
-            else{
+            }
+            else {
                 result[i].content = result[i].content.trim();
             }
         }
@@ -252,20 +252,17 @@ export function splitTextToMessages(raw:string, remove_think:boolean=true) {
     return result;
 }
 
-/**
- * 流式回复的可调用函数
- * 
- * 这个函数的作用是，根据传入的文本，流式返回结果。
- */
 export async function llmReplyStream({
-        inp_str, 
-        lst_msg = [], 
-        query_type='chat',
-        is_selection_exists=true, str_before='', str_after='',
-        lst_tools_input = [],
-        round_tool_call = 0,
-        flags = null
-    }) {
+    inp_str,
+    lst_msg = [],
+    query_type = 'chat',
+    is_selection_exists = true,
+    str_before = '',
+    str_after = '',
+    lst_tools_input = [],
+    round_tool_call = 0,
+    flags = null
+}) {
     //
     const locale = await joplin.settings.globalValue('locale');
     let dictText = await get_txt_by_locale();
@@ -277,28 +274,28 @@ export async function llmReplyStream({
     // flags
     let llmSettingFlags = await joplin.settings.values(['llmFlagLlmRunning'])
     let is_running = parseInt(String(llmSettingFlags['llmFlagLlmRunning']));
-    async function on_before_return(){
+    async function on_before_return() {
         await joplin.settings.setValue('llmFlagLlmRunning', 0);
     }
-    if (round_tool_call <= 0){ // 入口层
-        if (is_running == 1){ // 正在运行，强行停止
+    if (round_tool_call <= 0) { // Entry layer
+        if (is_running == 1) { // Already running, force stop
             await on_before_return();
             alert('Force stopped!')
             return;
         }
-        else if (is_running == 0){ // 
+        else if (is_running == 0) { // 
             await joplin.settings.setValue('llmFlagLlmRunning', 1);
         }
     }
-    else {  // 内层
-        if (is_running == 0){ // 内层在非运行状态下进入，则直接停止
+    else {  // Inner layer
+        if (is_running == 0) { // Inner layer entered in non-running state, stop directly
             // await on_before_return();
             // alert('Force stopped!')
             return;
         }
     }
     // ===============================================================
-    let apiModel = '', apiUrl = '', apiKey = '', extraConfig:any;
+    let apiModel = '', apiUrl = '', apiKey = '', extraConfig: any;
     let mcp_number = 0;
     let apiTemperature = 0;
     let apiMaxTokens = 0;
@@ -306,10 +303,10 @@ export async function llmReplyStream({
     let prompt_for_chat = '';
     // let llmSettingValues: any = {};
     let llmSelect = 0;
-    // 使用统一的参数读取函数
+    // Use unified parameter reading function
     const dict_llm = await get_llm_options();
-    try{
-        // 提取各个参数
+    try {
+        // Extract parameters
         apiModel = dict_llm['model'];
         apiUrl = dict_llm['url'];
         apiKey = dict_llm['key'];
@@ -322,43 +319,43 @@ export async function llmReplyStream({
         // llmSettingValues = dict_llm['allSettingValues'];
         llmSelect = dict_llm['llmSelect'];
     }
-    catch(err){
+    catch (err) {
         alert(`ERROR 210: ${err}`);
         await on_before_return();
         return;
     }
-    // 如果关键参数缺失，直接报错，不需要走后面的流程
+    // If key parameters are missing, report error directly without proceeding
     if (apiModel.trim() === '' || apiUrl.trim() === '' || apiKey.trim() === '') {
         alert(`ERROR 57: ${dictText['err_llm_conf']}`);
         await on_before_return();
         return;
     }
     //
-    // MCP 相关的参数
+    // MCP related parameters
     const lst_mcp_setting_keys = ['llmMcpEnabled'];
     const N_MAP_MAX = 42
-    for (let n = 1; n <= N_MAP_MAX; n++){
-        let n_mcp = String(n).padStart(2,"0");
-        lst_mcp_setting_keys.push('llmMcpEnabled_'+n_mcp)
-        lst_mcp_setting_keys.push('llmMcpServer_'+n_mcp)
-        lst_mcp_setting_keys.push('llmMcpHeaders_'+n_mcp)
+    for (let n = 1; n <= N_MAP_MAX; n++) {
+        let n_mcp = String(n).padStart(2, "0");
+        lst_mcp_setting_keys.push('llmMcpEnabled_' + n_mcp)
+        lst_mcp_setting_keys.push('llmMcpServer_' + n_mcp)
+        lst_mcp_setting_keys.push('llmMcpHeaders_' + n_mcp)
     }
-    const dict_mcp_settings = await joplin.settings.values(lst_mcp_setting_keys);  // 读取设置项
+    const dict_mcp_settings = await joplin.settings.values(lst_mcp_setting_keys);  // Read settings
     //
-    let mcp_servers_str = ''; // MCP服务器网址拼接的字符串
-    let mcp_headers_str = ''; // MCP服务器headers拼接的字符串
-    if(Number(dict_mcp_settings['llmMcpEnabled'])>0) { // MCP总开关
-        for (let n = 1; n <= N_MAP_MAX; n++){
-            let n_mcp = String(n).padStart(2,"0");
-            if(dict_mcp_settings['llmMcpEnabled_'+n_mcp]){ // 如果启用
-                let mcp_server_one = String(dict_mcp_settings['llmMcpServer_'+n_mcp]);
-                let mcp_headers_one = String(dict_mcp_settings['llmMcpHeaders_'+n_mcp] || '');
-                if(mcp_server_one.trim().length>0){
-                    if(mcp_servers_str.length<=0){
+    let mcp_servers_str = ''; // Concatenated MCP server URLs
+    let mcp_headers_str = ''; // Concatenated MCP server headers
+    if (Number(dict_mcp_settings['llmMcpEnabled']) > 0) { // MCP main switch
+        for (let n = 1; n <= N_MAP_MAX; n++) {
+            let n_mcp = String(n).padStart(2, "0");
+            if (dict_mcp_settings['llmMcpEnabled_' + n_mcp]) { // If enabled
+                let mcp_server_one = String(dict_mcp_settings['llmMcpServer_' + n_mcp]);
+                let mcp_headers_one = String(dict_mcp_settings['llmMcpHeaders_' + n_mcp] || '');
+                if (mcp_server_one.trim().length > 0) {
+                    if (mcp_servers_str.length <= 0) {
                         mcp_servers_str = mcp_server_one.trim();
                         mcp_headers_str = mcp_headers_one.trim();
                     }
-                    else{
+                    else {
                         mcp_servers_str = mcp_servers_str + '|' + mcp_server_one.trim();
                         mcp_headers_str = mcp_headers_str + '|' + mcp_headers_one.trim();
                     }
@@ -366,14 +363,14 @@ export async function llmReplyStream({
             }
         }
     }
-    // const MCP_SERVER = String(llmSettingValues['llmMcpServer']); // 读取设置
+    // const MCP_SERVER = String(llmSettingValues['llmMcpServer']); // Read settings
     const MCP_SERVER = mcp_servers_str;
     const MCP_HEADERS = mcp_headers_str;
-    const MAX_TOOL_CALL_ROUND = 5; // 限制最大工具循环次数，避免 MCP 的循环调用次数过多
+    const MAX_TOOL_CALL_ROUND = 5; // Limit MCP recursive call count
     //
     let IS_MCP_ENABLED = (mcp_number > 0 && MCP_SERVER.trim().length > 0);
     if (IS_MCP_ENABLED) {
-        // 服务器是否可用
+        // Check if server is available
         /*
         let is_mcp_server_available = await checkServerStatus(MCP_SERVER);
         if (is_mcp_server_available.status != 'online') {
@@ -381,39 +378,39 @@ export async function llmReplyStream({
             IS_MCP_ENABLED = false;
         }
         */
-        // 轮数是否过多
+        // Check if too many rounds
         if (round_tool_call > MAX_TOOL_CALL_ROUND) {
             IS_MCP_ENABLED = false;
         }
     }
     let MCP_MODE = 'mcp'  // agent, mcp, null
-    if (mcp_number == 10){
+    if (mcp_number == 10) {
         MCP_MODE = 'mcp'
     }
-    else if (mcp_number == 20){
+    else if (mcp_number == 20) {
         MCP_MODE = 'agent'
     }
     //
     //////
     //
-    const START_NOTE = await joplin.workspace.selectedNote(); // 启动时的笔记
+    const START_NOTE = await joplin.workspace.selectedNote(); // Note at start
     // 
-    let result_whole = '' // 存储本次回复生成的完整文档。但好像并没有用到？
-    let cursor_pos:any;  // 光标位置
+    let result_whole = '' // Store complete document generated by this reply. Seems unused though?
+    let cursor_pos: any;  // Cursor position
     //
     // head and tail
     const HEAD_TAIL_ENTER_COUNT = 2
-    const CHAT_HEAD = `Response from ${apiModel}:`;  // 不需要加粗
+    const CHAT_HEAD = `Response from ${apiModel}:`;  // No need to bold
     const CHAT_TAIL = '**End of response**';
-    if (flags === null){
+    if (flags === null) {
         flags = {
-            head_printed:false,
-            tail_printed:false
+            head_printed: false,
+            tail_printed: false
         }
     }
-    // 打印 CHAT_HEAD
+    // Print CHAT_HEAD
     const print_head = async () => {
-        await insert_content_move_view(`\n\n**${CHAT_HEAD}**`+'\n'.repeat(HEAD_TAIL_ENTER_COUNT), false);
+        await insert_content_move_view(`\n\n**${CHAT_HEAD}**` + '\n'.repeat(HEAD_TAIL_ENTER_COUNT), false);
     }
     const print_tail = async (n_enter_before = 0) => {
         // 避免回车次数过多
@@ -421,162 +418,154 @@ export async function llmReplyStream({
         await insert_content_move_view('\n'.repeat(n_enter) + `${CHAT_TAIL}\n\n`, false);
     }
     //
+    // Text animation parameters
+    const ANIMATION_INTERVAL_MS = 120;
     // ===============================================================
     // 
     /**
-     * 实时更新笔记中的回复，
-     * 依赖外部变量: result_whole, cursor_pos
+     * Update reply in note in real-time,
+     * Depends on external variables: result_whole, cursor_pos
      * @param new_text 
      * @param need_save 
      * @returns 
      */
-    async function insert_content_move_view (new_text: string, need_save_text = true) {
-        // 如果笔记切换了，强制退出
+    async function insert_content_move_view(new_text: string, need_save_text = true) {
+        // If note switched, force exit
         let current_note = await joplin.workspace.selectedNote();
-        if (current_note.id != START_NOTE.id){
+        if (current_note.id != START_NOTE.id) {
             // alert('ERROR: ' + dictText['err_note_changed'])
             await on_animation_error();
             throw new Error('Note changed error!')
         }
-        // 跳转到上次的光标位置
-        try{
+        // Jump to last cursor position
+        try {
             let last_pos = cursor_pos.startLine.from + cursor_pos.startPosition.column;
             await joplin.commands.execute('editor.execCommand', {
                 name: 'cm-moveCursorPosition',
                 args: [last_pos, false]
             });
         }
-        catch(e){
+        catch (e) {
             console.log(`Error = ${e}`)
         }
         //
-        // 逻辑（待验证）：首次输出之前，先输出开头 TODO
-        if (new_text.length>0){ // 不需要 trim，因为空格或换行也是输出
-            if (result_whole.length<=0){
-                if(!flags.head_printed){
-                    await joplin.commands.execute('insertText', `\n\n**${CHAT_HEAD}**`+'\n'.repeat(HEAD_TAIL_ENTER_COUNT));
+        // Logic (to verify): before first output, print header first TODO
+        if (new_text.length > 0) { // No need to trim, spaces or newlines are also output
+            if (result_whole.length <= 0) {
+                if (!flags.head_printed) {
+                    await joplin.commands.execute('insertText', `\n\n**${CHAT_HEAD}**` + '\n'.repeat(HEAD_TAIL_ENTER_COUNT));
                     flags.head_printed = true;
                 }
             }
-            // 插入最新内容到笔记
-            await joplin.commands.execute('insertText', new_text); 
+            flags.head_printed = true;
         }
-        // 将新内容拼接到结果中
-        if (need_save_text){
+        // Append new content to result
+        if (need_save_text) {
             result_whole += new_text;
         }
-        // 滚动
+        // Scroll
         await scroll_to_view(scroll_method);
         //
-        // 保存最新光标位置
+        // Save latest cursor position
         cursor_pos = await joplin.commands.execute('editor.execCommand', {
-            name: 'cm-getCursorPos' 
+            name: 'cm-getCursorPos'
         });
-    };
-    //
-    // 光标移动到选区最末尾
-    await joplin.commands.execute('editor.execCommand', 
-        {name: 'cm-moveCursorToSelectionEnd'}
+    }
+
+    // Move cursor to end of selection
+    await joplin.commands.execute('editor.execCommand',
+        { name: 'cm-moveCursorToSelectionEnd' }
     );
-    // 滚动条移动到光标位置
+    // Scroll to cursor position
     await scroll_to_view(scroll_method);
     //
-    // 初始化光标位置
-    try{
+    // Initialize cursor position
+    try {
         cursor_pos = await get_cursor_pos();
     }
-    catch(err){
-        // 获取光标位置失败，与编辑器版本有关。
+    catch (err) {
+        // Failed to get cursor position, related to editor version.
         console.warn('Error: cm-getCursorPos:', err);
         await on_animation_error();
     }
     // 
     // ===============================================================
     //
-    // 构造对话列表
+    // Build message list
     let prompt_messages = [];
-    // 如果有传入的，直接使用
-    if (lst_msg.length>0){ 
+    // If provided, use directly
+    if (lst_msg.length > 0) {
         prompt_messages = lst_msg;
     }
-    else{
-        // 自动补充当前的时间
+    else {
+        // Auto-add current time
         const ADD_CURRENT_TIME = true;
-        if (ADD_CURRENT_TIME){
-            prompt_messages.push({ role: 'system', content: `<current_time> ${formatNow()} </current_time>`});
+        if (ADD_CURRENT_TIME) {
+            prompt_messages.push({ role: 'system', content: `<current_time> ${formatNow()} </current_time>` });
         }
-        // 基础参数
+        // Basic parameters
         let chatType = parseInt(String(dict_llm['chatType']));
         let prompt_head = 'You are a helpful assistant.';
         //
         // Chat message list
-        if(query_type === 'chat' && chatType == 1){
-            if(prompt_for_chat.trim() === ''){
+        if (query_type === 'chat' && chatType == 1) {
+            if (prompt_for_chat.trim() === '') {
                 prompt_head = dictText['prompt_chat'];
             }
-            else{
+            else {
                 prompt_head = prompt_for_chat.trim();
-            }           
+            }
         }
-        prompt_messages.push({role: 'system', content: prompt_head});
+        prompt_messages.push({ role: 'system', content: prompt_head });
         //
         // MCP prompt
-        
-        if (IS_MCP_ENABLED){ // 也许下面 MCP 判断条件可以往前放。
-            prompt_messages.push({role: 'system', content: get_mcp_prompt()});
+
+        if (IS_MCP_ENABLED) { // MCP condition check could perhaps be moved earlier.
+            prompt_messages.push({ role: 'system', content: get_mcp_prompt() });
         }
-        prompt_messages.push({role: 'system', content: 'Response in user query language.'})
+        prompt_messages.push({ role: 'system', content: 'Response in user query language.' })
         //
-        if(query_type === 'chat' && chatType == 1){
+        if (query_type === 'chat' && chatType == 1) {
             let lstSplited = splitTextToMessages(inp_str);
             prompt_messages = prompt_messages.concat(lstSplited);
             console.log(prompt_messages);
         }
-        else{
+        else {
             prompt_messages.push({ role: 'user', content: inp_str });
         }
     }
     //
     // ===============================================================
-    // waiting 动效
-    const show_waiting = true; 
-    const waitingAnimator = new FloatProgressAnimator(
-        'notellm_waiting_anim', 
-        show_waiting, 
-        FLOATING_HTML_WAITING
-    ); 
+    // waiting animation
+    const show_waiting = true;
+    const waitingAnimator = new FloatProgressAnimator('notellm_waiting_anim', show_waiting, FLOATING_HTML_WAITING);
     //
-    // think 动效
+    // think animation
     const hide_thinking = Number(dict_llm['chatSkipThink']) === 1;
-    const thinkingAnimator = new FloatProgressAnimator(
-        'notellm_thinking_anim', 
-        hide_thinking, 
-        FLOATING_HTML_THINKING, 
-        COLOR_FLOAT.NORMAL
-    ); 
+    const thinkingAnimator = new FloatProgressAnimator('notellm_thinking_anim', hide_thinking, FLOATING_HTML_THINKING, COLOR_FLOAT.NORMAL);
     let thinking_status = 'not_started';
     //
-    // 开始等待
-    async function on_wait_start(){
+    // Start waiting
+    async function on_wait_start() {
         await waitingAnimator.start();
     }
-    // 等待结束
-    async function on_wait_end(){
+    // End waiting
+    async function on_wait_end() {
         await waitingAnimator.stop();
     }
     //
-    // 开始思考
-    async function on_think_start(){
+    // Start thinking
+    async function on_think_start() {
         await thinkingAnimator.start();
     }
-    // 思考中
-    async function think_going(){
+    // Thinking in progress
+    async function think_going() {
     }
-    // 结束思考
-    async function on_think_end(){
+    // End thinking
+    async function on_think_end() {
         await thinkingAnimator.stop();
     }
-    async function on_llm_end(){
+    async function on_llm_end() {
         //
     }
     async function on_animation_error() {
@@ -585,9 +574,9 @@ export async function llmReplyStream({
     }
     //
     // ============= ================= ==============
-    // 主要流程开始
+    // Main process starts
     // 
-    // 进入之后，立刻开始 wait 环节；
+    // Upon entry, immediately start wait phase;
     try {
         await on_wait_start();
     }
@@ -595,104 +584,121 @@ export async function llmReplyStream({
         await on_wait_end();
     }
     //
-    // 构造请求体
-    let requestBody = {
-        model: apiModel, // 模型名称
-        messages:prompt_messages,
-        stream: true, // 启用流式输出
-        temperature: apiTemperature,
-        max_tokens: apiMaxTokens,
+    // Build request body
+    // Check if this is an OpenAI reasoning model (o1, o3, etc.) or GPT-5.x model which requires different parameters
+    // - o-series (o1, o3, o4): use max_completion_tokens, no temperature
+    // - gpt-5.x series: use max_completion_tokens, no temperature (unless reasoning.effort is "none")
+    const isOSeriesModel = /^(o1|o3|o4)(-|$)/i.test(apiModel);
+    const isGPT5Model = /^gpt-5/i.test(apiModel);
+    const isNewModel = isOSeriesModel || isGPT5Model;
+
+    let requestBody: any = {
+        model: apiModel, // Model name
+        messages: prompt_messages,
+        stream: true, // Enable streaming output
     };
+
+    // Handle token limits based on model type
+    if (isNewModel) {
+        // GPT-5.x and o-series use max_completion_tokens
+        requestBody.max_completion_tokens = apiMaxTokens;
+    } else {
+        // Standard models use max_tokens and temperature
+        requestBody.temperature = apiTemperature;
+        requestBody.max_tokens = apiMaxTokens;
+    }
     //
     // ============= ================= ==============
-    // 工具 MCP
+    // Tool MCP
     //
     let MCP_SERVER_URL_RESTFUL = '';
-    if (MCP_MODE === 'mcp'){
+    if (MCP_MODE === 'mcp') {
         MCP_SERVER_URL_RESTFUL = MCP_SERVER + '/mcp/get_tools'
     }
-    else if (MCP_MODE === 'agent'){
+    else if (MCP_MODE === 'agent') {
         MCP_SERVER_URL_RESTFUL = MCP_SERVER + '/mcp/get_agents'
     }
     //
-    let openai_tools:any;
-    let openai_map:any
-    if (IS_MCP_ENABLED) {  
+    let openai_tools: any;
+    let openai_map: any
+    if (IS_MCP_ENABLED) {
         //
-        // 首先需要获取工具列表，用于组装消息体
-        if (lst_tools_input.length>0){ // 直接指定工具列表，不再通过请求获取
+        // First get tool list for message body assembly
+        if (lst_tools_input.length > 0) { // Directly specify tool list, no need to fetch
             requestBody['tools'] = lst_tools_input;
             requestBody['temperature'] = 0;
         }
-        else {  // 获取可用工具的列表
+        else {  // Get available tool list
             openai_tools = await mcp_get_tools_openai(MCP_SERVER, MCP_HEADERS);
             openai_map = openai_tools['tmap'];
             //
-            if (openai_tools['tools'].length > 0) {  // 还需要更多的格式验证
+            if (openai_tools['tools'].length > 0) {  // Need more format validation
                 requestBody['tools'] = openai_tools['tools'];
             }
         }
     }
     /**
-     * 纯显示 toast，无实际作用。
+     * Display toast only, no actual functionality.
      * 
-     * 调用工具时，显示工具名称
+     * When calling tool, display tool name
      * @param tool_name 
      */
-    async function on_tool_call_start(tool_name:string, server_name:string=''){
+    async function on_tool_call_start(tool_name: string, server_name: string = '') {
         let mcp_text = `[${MCP_MODE}]`
-        if(server_name.trim().length > 0){
+        if (server_name.trim().length > 0) {
             mcp_text += `Calling ${server_name}.${tool_name}, please wait...`
-        } 
-        else{
+        }
+        else {
             mcp_text += `Calling ${tool_name}, please wait...`
         }
         await joplin.commands.execute('editor.execCommand', {
             name: 'cm-addFloatingObject',
-            args: [{ text: makeJumpingHtml(mcp_text), 
-                floatId: 'on_tool_call_start', 
-                bgColor: COLOR_FLOAT.NORMAL }]
+            args: [{
+                text: makeJumpingHtml(mcp_text),
+                floatId: 'on_tool_call_start',
+                bgColor: COLOR_FLOAT.NORMAL
+            }]
         });
     }
-    async function on_tool_call_end(tool_name:string) {
+    async function on_tool_call_end(tool_name: string) {
         await joplin.commands.execute('editor.execCommand', {
             name: 'cm-removeFloatingObject',
             args: ['on_tool_call_start']
         });
     }
     //
-    // 根据自定义设置，覆盖修改现有的配置项
-    try{
-        if(extraConfig.trim().length>0){
+    // Override existing config items based on custom settings
+    try {
+        if (extraConfig.trim().length > 0) {
             let newConfig = JSON.parse(extraConfig);
-            requestBody = {...requestBody, ...newConfig};
+            requestBody = { ...requestBody, ...newConfig };
         }
         console.log(JSON.stringify(requestBody));
     }
-    catch(err){
+    catch (err) {
         console.warn('JSON parse failed:', err);
     }
     //
-    // 发起 HTTP 请求
-    let llm_response:any;
-    try{
+    // Initiate HTTP request
+    let llm_response: any;
+    try {
         let dict_headers = {
             'User-Agent': 'NoteLLM',
-            // 'X-Client-Name':'NoteLLM', // 这行可能导致 gemini 屏蔽，所以先不要添加
+            // 'X-Client-Name':'NoteLLM', // This line may cause gemini to block, so don't add it
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`, // 设置 API 密钥
+            'Authorization': `Bearer ${apiKey}`, // Set API key
         }
-        // 为 claude 特殊处理：
-        if (apiUrl.includes('api.anthropic.com')){
-            dict_headers['anthropic-dangerous-direct-browser-access'] = 'true';  // 请求头必须是字符串
+        // Special handling for Claude:
+        if (apiUrl.includes('api.anthropic.com')) {
+            dict_headers['anthropic-dangerous-direct-browser-access'] = 'true';  // Request header must be string
         }
         //
         llm_response = await fetch(apiUrl, {
             method: 'POST',
             headers: dict_headers,
-            body: JSON.stringify(requestBody), // 将请求体序列化为 JSON
+            body: JSON.stringify(requestBody), // Serialize request body to JSON
         });
-        // 检查 HTTP 响应状态
+        // Check HTTP response status
         if (!llm_response.ok || !llm_response.body) {
             const errorText = await llm_response.text();
             console.error('Error from LLM API:', errorText);
@@ -702,45 +708,37 @@ export async function llmReplyStream({
             return;
         }
     }
-    catch(err){  
+    catch (err) {
         //
-        // 网络错误，或者CORS限制。此时得到的response是空对象。
-        if (err.message.includes('Failed to fetch')){
+        // Network error or CORS restriction. In this case response is empty object.
+        if (err.message.includes('Failed to fetch')) {
             console.error('Error 173:', err);
             alert(`Error 173: ${err}. \n ${dictText['err_cors']}`);
         }
-        else{
-            console.error('Error 177:',err);
+        else {
+            console.error('Error 177:', err);
             alert(`ERROR 177: ${err} \n llm_response = ${llm_response}.`);
         }
         await on_before_return();
         await on_animation_error();
         return;
-    }   
-    finally{
-        // 此处暂时没有需要做的
+    }
+    finally {
+        // Nothing to do here for now
     }
     //
-    // 输出解析部分 =============================
+    // Output parsing section =============================
     //
-    let output_str = '';
-    let flag_head_to_write = true;  // 是否需要输出开头
-    let fail_count = 0
-    const FAIL_COUNT_MAX = 3
-    let reply_type = 'unknown';  // 本次请求的类型划分（是否调用工具）
-    let is_stream_done = false;  // 标记输出完毕的标志位
-    let lst_tool_calls = [];  // 
-    let force_stop = false;  // 强制退出
     //
     let dict_res_all = {
-        "res_whole":"",
-        "res_content":"",
-        "res_tool":"",
-        "res_think":"",
-        "finist_reason":"",
-        "delta_content":"",
-        "delta_think":"",
-        "delta_tool":"",
+        "res_whole": "",
+        "res_content": "",
+        "res_tool": "",
+        "res_think": "",
+        "finist_reason": "",
+        "delta_content": "",
+        "delta_think": "",
+        "delta_tool": "",
         "thinking_status": "not_started",
         "think_word_start": "",
     }
@@ -753,11 +751,11 @@ export async function llmReplyStream({
      * 
      * @param str_delta_parsed 
      */
-    function response_split_stream(str_delta_parsed:string){
+    function response_split_stream(str_delta_parsed: string) {
         //
         dict_res_all['res_whole'] += str_delta_parsed;
         //
-        const METHOD_TYPE:string = 'METHOD_2';
+        const METHOD_TYPE: string = 'METHOD_2';
         //
         if (METHOD_TYPE === 'METHOD_1') { // 最简单版本，找开头词语、结束词语
             const WORD_THINK_START = '<think>';
@@ -766,7 +764,7 @@ export async function llmReplyStream({
             const lastClose = dict_res_all['res_whole'].indexOf(WORD_THINK_END);
             //
             if (lastOpen >= 0) { // 如果存在思考
-                if (lastClose > 0 && lastClose > lastOpen){  // 思考完成
+                if (lastClose > 0 && lastClose > lastOpen) {  // 思考完成
                     let str_think = dict_res_all['res_whole'].slice(lastOpen + WORD_THINK_START.length, lastClose);
                     let str_content = dict_res_all['res_whole'].slice(lastClose + WORD_THINK_END.length);
                     str_content = str_content.replace(/^\n+/g, ''); // 避免解析出来的 content 以回车开头
@@ -775,7 +773,7 @@ export async function llmReplyStream({
                     dict_res_all['delta_content'] = str_content.startsWith(dict_res_all['res_content']) ? str_content.slice(dict_res_all['res_content'].length) : null; // 
                     dict_res_all['res_content'] = str_content;
                     dict_res_all['thinking_status'] = 'think_end';
-                }                
+                }
                 else { // 思考中
                     let str_think = dict_res_all['res_whole'].slice(lastOpen + WORD_THINK_START.length, lastClose);
                     dict_res_all['delta_think'] = str_think.startsWith(dict_res_all['res_think']) ? str_think.slice(dict_res_all['res_think'].length) : null; // 
@@ -797,7 +795,7 @@ export async function llmReplyStream({
             //
             if (dict_res_all.thinking_status === 'think_end') {
                 dict_res_all['res_content'] += str_delta_parsed;
-                if (dict_res_all['res_content'].startsWith('\n')){
+                if (dict_res_all['res_content'].startsWith('\n')) {
                     dict_res_all['res_content'] = dict_res_all['res_content'].trimStart();
                     dict_res_all['delta_content'] = str_delta_parsed.trimStart();
                 }
@@ -814,13 +812,13 @@ export async function llmReplyStream({
                 // let thinkWordStart = '';
                 //
                 for (let i = 0; i < segments.length; i++) {
-                    if (dict_res_all.thinking_status === 'not_started'){
+                    if (dict_res_all.thinking_status === 'not_started') {
                         if (segments[i] === '<think>' || segments[i] == '*Thinking...*') {
                             lastOpenLineIndex = i;
                             dict_res_all.thinking_status = 'think_start';
                             dict_res_all.think_word_start = segments[i];
                         }
-                        else if (segments[i].length<=0) { // 空行，暂不判断
+                        else if (segments[i].length <= 0) { // 空行，暂不判断
                             continue;
                         }
                         else { // 出现其他开头，说明不需要思考
@@ -831,23 +829,23 @@ export async function llmReplyStream({
                         }
                     }
                     //
-                    else if (dict_res_all.thinking_status === 'think_start'){
+                    else if (dict_res_all.thinking_status === 'think_start') {
                         console.log('[847] segments[i] = ', segments[i]);
                         console.log(dict_res_all.think_word_start);
                         if (dict_res_all.think_word_start === '<think>') {
                             if (segments[i] === '</think>') {
-                                lastCloseLineIndex = i+1; // 为了think包括当前词汇
+                                lastCloseLineIndex = i + 1; // 为了think包括当前词汇
                                 dict_res_all.thinking_status = 'think_end';
                                 let segments_origional = dict_res_all.res_whole.split('\n');
-                                let str_think = segments_origional.slice(lastOpenLineIndex, lastCloseLineIndex-1).join("");
+                                let str_think = segments_origional.slice(lastOpenLineIndex, lastCloseLineIndex - 1).join("");
                                 dict_res_all['delta_think'] = str_think.startsWith(dict_res_all['res_think']) ? str_think.slice(dict_res_all['res_think'].length) : null; // 
                                 dict_res_all['res_think'] = str_think;
                                 break;
                             }
                         }
-                        else if (dict_res_all.think_word_start === '*Thinking...*'){
-                            if(i>=1){
-                                if (!segments[i].startsWith('>') && segments[i].length>0 && segments[i-1].startsWith('>') ){
+                        else if (dict_res_all.think_word_start === '*Thinking...*') {
+                            if (i >= 1) {
+                                if (!segments[i].startsWith('>') && segments[i].length > 0 && segments[i - 1].startsWith('>')) {
                                     lastCloseLineIndex = i;
                                     dict_res_all.thinking_status = 'think_end';
                                     let segments_origional = dict_res_all.res_whole.split('\n');
@@ -868,11 +866,11 @@ export async function llmReplyStream({
                 if (dict_res_all.thinking_status == 'think_end') { // 不处于思考
                     // 找到增量的思考部分与内容部分
                     let segments_origional = dict_res_all.res_whole.split('\n');
-                    let str_think:string='';
-                    if (dict_res_all.think_word_start === '<think>'){
-                        str_think = segments_origional.slice(lastOpenLineIndex, lastCloseLineIndex-1).join("");
+                    let str_think: string = '';
+                    if (dict_res_all.think_word_start === '<think>') {
+                        str_think = segments_origional.slice(lastOpenLineIndex, lastCloseLineIndex - 1).join("");
                     }
-                    else if (dict_res_all.think_word_start === '*Thinking...*'){
+                    else if (dict_res_all.think_word_start === '*Thinking...*') {
                         str_think = segments_origional.slice(lastOpenLineIndex, lastCloseLineIndex).join("");
                     }
                     let str_content = segments_origional.slice(lastCloseLineIndex).join("");
@@ -883,7 +881,7 @@ export async function llmReplyStream({
                     dict_res_all['res_content'] = str_content;
                     console.log('[869] dict_res_all = ', JSON.stringify(dict_res_all, null, 2))
                 }
-                else if (dict_res_all.thinking_status == 'think_start'){ // 结尾 thinking
+                else if (dict_res_all.thinking_status == 'think_start') { // 结尾 thinking
                     let segments_origional = dict_res_all.res_whole.split('\n');
                     let str_think = segments_origional.slice(lastOpenLineIndex, lastCloseLineIndex).join("");
                     dict_res_all['delta_think'] = str_think.startsWith(dict_res_all['res_think']) ? str_think.slice(dict_res_all['res_think'].length) : null; // 
@@ -896,33 +894,43 @@ export async function llmReplyStream({
         return dict_res_all['delta_content'];
     }
     //
-    try{  
-        const reader = llm_response.body.getReader();  //
-        const decoder = new TextDecoder('utf-8');  // 
+    let reply_type = 'unknown';  // Type classification for this request (tool call or not)
+    let is_stream_done = false;
+    let lst_tool_calls = [];
+    let force_stop = false;  // Force exit
+    let fail_count = 0;
+    const FAIL_COUNT_MAX = 5;
+    let output_str = '';
+    let flag_head_to_write = true; // Temporary flag for head printing logic
+    let need_add_head = true;
+
+    try {
+        const reader = llm_response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
         while (!is_stream_done) {
-            // 让出控制权，用于激活外部流程
+            // Yield control to activate external processes
             sleep_ms(0);
             //
-            // 切换笔记后退出
+            // Exit after note switch
             let current_note = await joplin.workspace.selectedNote();
-            if (current_note.id != START_NOTE.id){
+            if (current_note.id != START_NOTE.id) {
                 alert('ERROR: ' + dictText['err_note_changed'])
                 await on_animation_error();
                 await on_before_return();
-                return;  
+                return;
             }
-            // 连续失败后退出
+            // Exit after consecutive failures
             if (fail_count >= FAIL_COUNT_MAX) {
-                alert(dictText['err_wrong'])                
+                alert(dictText['err_wrong'])
                 await on_animation_error();
-                break;  
+                break;
             }
-            // 强制退出
+            // Force exit
             let llmSettingFlags_inner = await joplin.settings.values(['llmFlagLlmRunning'])
             let is_running_inner = parseInt(String(llmSettingFlags_inner['llmFlagLlmRunning']));
-            if (is_running_inner == 0){
+            if (is_running_inner == 0) {
                 force_stop = true;
-            } 
+            }
             if (force_stop) {
                 await on_animation_error();
                 await on_before_return();
@@ -934,57 +942,58 @@ export async function llmReplyStream({
                 is_stream_done = true;
                 await on_wait_end();
                 await on_think_end();
-                break; // 流结束时退出循环
+                break; // Exit loop when stream ends
             }
             //
-            // 解码并解析数据块
-            const chunk:string = decoder.decode(value, { stream: true });
+            // Decode and parse data chunk
+            const chunk: string = decoder.decode(value, { stream: true });
             // console.info('Stream Chunk = ', chunk);
             //
-            // 解析 JSON 行
-            if (typeof chunk === "string"){  // 块作为整体，因为一次可能收到多行，每行都是 data: 开头，或者纯空行
+            // Parse JSON lines
+            if (typeof chunk === "string") {  // Chunk as whole, may receive multiple lines, each starts with data: or is empty line
                 //
-                // 只要有反馈了，就可以停止waiting提示
+                // As long as there's feedback, can stop waiting message
                 // await on_wait_end();
                 //
-                for (const data_line of chunk.split('\n')) { // 逐行拆解。
-                    // 理论上讲，这里拆解并不会将 json 中间断开，因为换行符都被转义了
-                    // 所以拆出来的全都是完整的 data: 行
-                    // 但考虑到网络传输，可能会有 data: 被中间切断，所以最稳的方法是 buffer 缓存。 TODO
+                for (const data_line of chunk.split('\n')) { // Split line by line.
+                    // Theoretically, splitting here won't break json in middle, as newlines are escaped
+                    // So all split results are complete data: lines
+                    // But considering network transmission, data: might be cut in middle, so safest method is buffer caching. TODO
                     // console.info(`chunk_line = ${data_line}`)
                     const trimmedLine = data_line.trim();
-                    // 忽略空行或无效行
+                    // Ignore empty or invalid lines
                     if (!trimmedLine || !trimmedLine.startsWith('data:')) {
                         continue;
                     }
-                    // 处理 "data:" 前缀
-                    const jsonString = trimmedLine.replace(/^data:/, ''); // 去掉 "data:" 前缀
-                    // 特殊情况：处理流结束的标志 "data: [DONE]"
+                    // Process "data:" prefix
+                    const jsonString = trimmedLine.replace(/^data:/, ''); // Remove "data:" prefix
+                    // Special case: handle stream end flag "data: [DONE]"
                     if (jsonString.trim() === '[DONE]') {
                         console.info('Got [DONE]. Stream finished.');
                         is_stream_done = true;
                         break;
                     }
                     try {
-                        // 解析 JSON 数据
+                        // Parse JSON data
                         const str_json_parsed = JSON.parse(jsonString);
+                        const parsed = str_json_parsed; // Keep both names for transition
                         //
                         let new_delta = str_json_parsed.choices[0]?.delta || {};
                         let finish_reason = str_json_parsed.choices[0]?.finish_reason || null
                         //
-                        // 如果尚未判定类型
-                        if (reply_type == 'unknown'){  
-                            // 工具调用
-                            if (finish_reason == null){
-                                if ('tool_calls' in new_delta){ // 判定标准：如果有这个键
+                        // If type not yet determined
+                        if (reply_type == 'unknown') {
+                            // Tool call
+                            if (finish_reason == null) {
+                                if ('tool_calls' in new_delta) { // Criterion: if this key exists
                                     reply_type = 'tool_calls';
                                 }
                             }
-                            else if (finish_reason == 'tool_calls'){
+                            else if (finish_reason == 'tool_calls') {
                                 reply_type = 'tool_calls';
                             }
                             else {
-                                // 常规
+                                // Regular
                                 reply_type = 'content';
                                 // await print_head();
                                 // cursor_pos = await get_cursor_pos();
@@ -993,403 +1002,360 @@ export async function llmReplyStream({
                         // console.info('[875] new_delta = ', new_delta)
                         // console.info('[876] reply_type = ', reply_type);
                         //
-                        //if (reply_type == 'tool_calls') {  // 如果是工具调用
-                            //
-                        // 保存发来的内容
-                        if ('tool_calls' in new_delta){
+                        // Save received content
+                        if ('tool_calls' in new_delta) {
                             console.info('[1016] new_delta = ', new_delta)
-                            for (let delta_tool_calls of new_delta['tool_calls']){
+                            for (let delta_tool_calls of new_delta['tool_calls']) {
                                 lst_tool_calls.push(delta_tool_calls);
                             }
                         }
                         //}
-                        else { //if (reply_type == 'content') {  // 如果是文本回复 (通常)
-                            // 处理 content 内容
-                            let delta_content = str_json_parsed.choices[0]?.delta?.content || '';
-                            let delta_content_result = response_split_stream(delta_content);
-                            // console.info('[909] str_json_parsed = ', str_json_parsed)
-                            // console.info('[910] delta_content_result = ', delta_content_result)
+                        else { //if (reply_type == 'content') {  // If text reply (usually)
+                            // Process content
+                            let delta_content = parsed.choices[0]?.delta?.content || '';
                             //
-                            // 判断思考状态，不涉及输出
-                            if (thinking_status === 'not_started') {
-                                //
-                                // only when startswith <think>
-                                if (['<think>', '<THINK>'].includes(delta_content.trim())){  // 判定依据是这两个关键词，有些脆弱  TODO
-                                    thinking_status = 'thinking'
-                                    // 
-                                    // 思考期间的等待可视化
-                                    if (hide_thinking){
-                                        await on_think_start();
-                                        continue;
-                                    }
-                                }
-                                else if (delta_content.trim().startsWith('<think>')) {
-                                    // 特例：工具调用等情况下，直接将完整版发来了，也属于这种情况
-                                    const endIndex = delta_content.indexOf('</think>');
-                                    if (endIndex !== -1){
-                                        if (hide_thinking){
-                                            delta_content = delta_content.trim().replace(/^<think>[\s\S]*?<\/think>\n\n/, '');
-                                            thinking_status = 'think_finished';
-                                        }
-                                    }
-                                }
-                                else{
-                                    // 如果不是 <think> 开头，说明不是推理模式，直接跳过
-                                    // 特例：工具调用等情况下，直接将完整版发来了，也属于这种情况
-                                    thinking_status = 'think_finished';
-                                }
-                            }
-                            else if(thinking_status === 'thinking') {  // 如果已经在思考中了
-                                if (['</think>', '</THINK>'].includes(delta_content.trim())){  // 结束思考的标志
-                                    thinking_status = 'think_ends';
-                                    await on_think_end();
-                                }
-                                if (hide_thinking){
+                            if (['<think>', '<THINK>'].indexOf(delta_content.trim()) !== -1) {
+                                thinking_status = 'thinking'
+                                // 
+                                // Visualize waiting during thinking
+                                if (hide_thinking) {
+                                    await on_think_start();
                                     continue;
                                 }
-                            } 
-                            else if (thinking_status === 'think_ends'){
-                                if(delta_content.trim() === ''){
-                                    if (hide_thinking){
-                                        continue;
-                                    }
+                            }
+                        }
+                    else if (thinking_status === 'thinking') {  // If already thinking
+                            if (['</think>', '</THINK>'].indexOf(delta_content.trim()) !== -1) {  // End thinking marker
+                                thinking_status = 'think_ends';
+                                await on_think_end();
+                            }
+                            if (hide_thinking) {
+                                continue;
+                            }
+                        }
+                        else if (thinking_status === 'think_ends') {
+                            if (delta_content.trim() === '') {
+                                if (hide_thinking) {
+                                    continue;
                                 }
-                                else if (delta_content.trim().length > 0){
-                                    thinking_status = 'think_finished';
-                                    await on_think_end();
-                                    if (hide_thinking){
-                                        delta_content = delta_content.trim();
-                                    }
+                            }
+                            else if (delta_content.trim().length > 0) {
+                                thinking_status = 'think_finished';
+                                await on_think_end();
+                                if (hide_thinking) {
+                                    delta_content = delta_content.trim();
                                 }
                             }
-                            else if (thinking_status === 'think_finished') {
-                                // 思考已经结束，会进入这里
-                            }
-                            //
-                            // 修改位置
-                            if (hide_thinking){
-                                output_str = dict_res_all['res_content'];
-                            }
-                            else {
-                                output_str = dict_res_all['res_whole'];
-                            }
-                            //
-                            // 避免大模型又输出一次 head。
-                            // TODO：这个逻辑比较落后，之后可以考虑删除
-                            if(flag_head_to_write){
-                                if (output_str.length>10 && !output_str.trim().startsWith('**')){  // 肯定不是重复出现
-                                    // console.log('[973] output_str = ',output_str)
+                        }
+                        //
+                        if (thinking_status === 'think_finished') {
+                            // Avoid LLM outputting head again. This logic is outdated, may consider removing later
+                            if (need_add_head) {
+                                if (output_str.length > 10 && !output_str.trim().startsWith('**')) {  // Definitely not duplicate
                                     await insert_content_move_view(output_str);
                                     flag_head_to_write = false;
                                 }
-                                else if(output_str.length>(5 + `**${CHAT_HEAD}**`.length) ){
-                                    if(output_str.trim().startsWith(`**${CHAT_HEAD}**`)){  // 
-                                        output_str = output_str.replace(`**${CHAT_HEAD}**`,''); // 避免重复出现
-                                        // console.log('[980] output_str = ',output_str)
+                                else if (output_str.length > (5 + `**${CHAT_HEAD}**`.length)) {
+                                    if (output_str.trim().startsWith(`**${CHAT_HEAD}**`)) {  //
+                                        output_str = output_str.replace(`**${CHAT_HEAD}**`, ''); // Avoid duplicate
                                         await insert_content_move_view(output_str);
                                     }
-                                    else{
-                                        // console.log('[983] output_str = ',output_str)
+                                    else {
                                         await insert_content_move_view(output_str);
                                     }
                                     flag_head_to_write = false;
                                 }
                                 fail_count = 0;
                             }
-                            else { // 如果已经输出了开头
-                                if (hide_thinking){
-                                    await insert_content_move_view(delta_content_result); // 只输出思考部分
+                            else { // if (reply_type == 'content') {
+                                if (hide_thinking) {
+                                    let delta_content_result = response_split_stream(delta_content);
+                                    await insert_content_move_view(delta_content_result);
                                 }
                                 else {
-                                    await insert_content_move_view(delta_content);  // 输出全部生成的部分
+                                    await insert_content_move_view(delta_content); // Update content in real-time
                                 }
                             }
                         }
-                    } catch (err) {
-                        console.warn('Failed to parse line:', trimmedLine, err);
-                        fail_count += 1;
                     }
                 }
-            }
-            else{
-                console.info('Chunk is not string: ', chunk);
-            }
-        }  // 结束 while 循环，所有chunk接收完毕
-        //
-        // 大模型回复完成，执行收尾工作 ================= ================ ===============
-        //
-        if (reply_type == 'content') { // 收尾类型：文本回复模式
-            try{
-                // 万一总长度不足导致上面没有执行；
-                if (flag_head_to_write){ 
-                    await insert_content_move_view(output_str);
-                }
-                // 防止大模型抽风，重复输出手动设定的结束语。
-                if (output_str.trim().endsWith(CHAT_TAIL)){  
-                    await insert_content_move_view('\n\n');
-                    flags.tail_printed = true;
-                }
-                else{  // 正常情况，由程序输出结束语
-                    let n_tail_match = dict_res_all['res_content'].match(/[\r\n]+$/)
-                    let n_enter_tail = n_tail_match ? n_tail_match[0].length : 0;
-                    await print_tail(n_enter_tail);
-                    flags.tail_printed = true;
-                }
-                //
-                // 显示完成提示
-                // await joplin.commands.execute('editor.execCommand', {
-                //     name: 'cm-tempFloatingObject',
-                //     args: [{ 
-                //         text: `Finished.`, 
-                //         floatId: get_random_floatid(), 
-                //         ms: 2000, 
-                //         bgColor: COLOR_FLOAT.FINISH
-                //     }]
-                // });
-                await add_short_floating(
-                    `Finished.`, 
-                    get_random_floatid(), 
-                    2000, 
-                    COLOR_FLOAT.FINISH
-                );
-            }
-            catch(err){
-                console.error('ERR501_in_utils.ts: ', err);
+            } catch (err) {
+                console.warn('Failed to parse line:', trimmedLine, err);
+                fail_count += 1;
             }
         }
+    }
+    else {
+        console.info('Chunk is not string: ', chunk);
+    }
+}
+//
+// LLM reply complete, execute cleanup work ================= ================ ===============
+//
+if (reply_type == 'content') { // Cleanup type: text reply mode
+    try {
+        // In case total length insufficient so above didn't execute;
+        if (need_add_head) {
+            await insert_content_move_view(output_str);
+        }
+        // Prevent LLM from going crazy and outputting manually set ending again.
+        if (output_str.trim().endsWith(CHAT_TAIL)) {
+            await insert_content_move_view('\n\n');
+            flags.tail_printed = true;
+        }
+        else {  // Normal case, program outputs ending
+            await print_tail();
+            flags.tail_printed = true;
+        }
         //
-        else if (reply_type == 'tool_calls') {  // 收尾类型：工具调用模式
-            //
-            console.log('[1180] lst_tool_calls = ', lst_tool_calls);
-            //
-            // 此处 stream 可能得到的是不完整的请求，需要拼接：
-            let lst_tool_call_quests = [];
-            for (const toolCallDelta of lst_tool_calls) {
-                const index = toolCallDelta.index;
+        // Display completion message
+        // await joplin.commands.execute('editor.execCommand', {
+        //     name: 'cm-tempFloatingObject',
+        //     args: [{ 
+        //         text: `Finished.`, 
+        //         floatId: get_random_floatid(), 
+        //         ms: 2000, 
+        //         bgColor: COLOR_FLOAT.FINISH
+        //     }]
+        // });
+        await add_short_floating(
+            `Finished.`,
+            get_random_floatid(),
+            2000,
+            COLOR_FLOAT.FINISH
+        );
+    }
+    catch (err) {
+        console.error('ERR501_in_utils.ts: ', err);
+    }
+}
+//
+else if (reply_type == 'tool_calls') {  // Cleanup type: tool call mode
+    //
+    console.log('[1180] lst_tool_calls = ', lst_tool_calls);
+    //
+    // Stream may get incomplete request, need to concatenate:
+    let lst_tool_call_quests = [];
+    for (const toolCallDelta of lst_tool_calls) {
+        const index = toolCallDelta.index;
 
-                // 如果是这个 index 的第一个块，则初始化组装器
-                if (!lst_tool_call_quests[index]) {
-                    lst_tool_call_quests[index] = { id: "", type: "function", function: { name: "", arguments: "" } };
-                }
+        // If first chunk for this index, initialize assembler
+        if (!lst_tool_call_quests[index]) {
+            lst_tool_call_quests[index] = { id: "", type: "function", function: { name: "", arguments: "" } };
+        }
 
-                // 拼接 ID
-                if (toolCallDelta.id) {
-                    lst_tool_call_quests[index].id += toolCallDelta.id;
-                }
-                // 拼接函数名
-                if (toolCallDelta.function?.name) {
-                    lst_tool_call_quests[index].function.name += toolCallDelta.function.name;
-                }
-                // 拼接参数 (最关键的部分)
-                if (toolCallDelta.function?.arguments) {
-                    lst_tool_call_quests[index].function.arguments += toolCallDelta.function.arguments;
-                }
-            }
-            // 拼接完成后
-            console.log('[1206] lst_tool_call_quests = ', lst_tool_call_quests);
+        // Concatenate ID
+        if (toolCallDelta.id) {
+            lst_tool_call_quests[index].id += toolCallDelta.id;
+        }
+        // Concatenate function name
+        if (toolCallDelta.function?.name) {
+            lst_tool_call_quests[index].function.name += toolCallDelta.function.name;
+        }
+        // Concatenate arguments (most critical part)
+        if (toolCallDelta.function?.arguments) {
+            lst_tool_call_quests[index].function.arguments += toolCallDelta.function.arguments;
+        }
+    }
+    // After concatenation complete
+    console.log('[1206] lst_tool_call_quests = ', lst_tool_call_quests);
+    //
+    // Call tool via post request
+    let lst_tool_result = []
+    let lst_tool_result_message = []  // 
+    let tool_name_cache = '';
+    for (const tool_call_one of lst_tool_call_quests) {
+        let tool_result_one: any;  // Execution result
+        tool_name_cache = tool_call_one.function.name;
+        let tool_call_id: string = tool_call_one['id'];
+        try {
+            let tool_call_name = ''
+            let json_body: string;
             //
-            // 调用工具，通过 post 请求
-            let lst_tool_result = []
-            let lst_tool_result_message = []  // 
-            let tool_name_cache = '';
-            for (const tool_call_one of lst_tool_call_quests) {
-                let tool_result_one:any;  // 运行结果
-                tool_name_cache = tool_call_one.function.name;
-                let tool_call_id:string = tool_call_one['id'];
+            // Display toast
+            if (MCP_MODE == 'agent') {
+                tool_call_name = 'call_agents';  // Actually can omit, but some models aren't smart enough, force specify to avoid errors
+                // if ("agent_id" in tool_call_one.function.arguments){
+                //     console.log(tool_call_one.function.arguments)
+                // }
+                // else {
+                //     throw new Error('Key parameter missing');
+                // }
                 try {
-                    let tool_call_name = ''
-                    let json_body:string;
-                    //
-                    // 显示 toast
-                    if (MCP_MODE == 'agent'){ // agent mode // developing
-                        tool_call_name = 'call_agents';  // 其实可以不写，但某些模型智力不够，避免弄错可以强制指定
-                        // if ("agent_id" in tool_call_one.function.arguments){
-                        //     console.log(tool_call_one.function.arguments)
-                        // }
-                        // else {
-                        //     throw new Error('关键参数缺失');
-                        // }
-                        try{
-                            let agent_name = tool_call_one.function.arguments
-                            await on_tool_call_start(agent_name);
-                        }
-                        catch(e){
-                            console.log(`Line 761: ${e}`)
-                        }
-                    }
-                    else { // normal mode
-                        tool_call_name = tool_call_one.function.name
-                        await on_tool_call_start(tool_call_name);
-                    }
-                    //
-                    // 执行工具调用
-                    if (false) {  // 这个方法已经废弃
-                        let MCP_RUN_URL = '';
-                        MCP_RUN_URL = MCP_SERVER + '/mcp/call_tool'
-                        json_body = JSON.stringify({
-                            name: tool_call_name,
-                            arguments: tool_call_one.function.arguments
-                        })
-                        console.log("json_body =", json_body)
-                        const tool_call_response = await fetch(MCP_RUN_URL, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: json_body
-                        });
-
-                        if (!tool_call_response.ok) {
-                            throw new Error('网络响应异常');
-                        }
-
-                        tool_result_one = await tool_call_response.json(); 
-                    }
-                    else{
-                        // let mcp_url = MCP_SERVER
-                        let tool_call_args_json = tool_call_one.function.arguments
-                        let tool_call_args = JSON.parse(tool_call_args_json)
-                        let tool_real_name = openai_map[tool_call_name]['function_name']
-                        let tool_real_server_url = openai_map[tool_call_name]['server_url']
-                        let tool_headers = openai_map[tool_call_name]['headers'] || ''
-                        //
-                        console.log(`[1274] tool_real_server_url = ${tool_real_server_url}, tool_call_name = ${tool_call_name}, tool_real_name = ${tool_real_name}`)
-                        console.log('[1275] tool_call_args = ', tool_call_args)
-                        console.log('[1276] len = ', Object.keys(tool_call_args).length)
-                        console.log('[1277] tool_call_one = ', tool_call_one)
-                        //
-                        let result_one:any;
-                        if (Object.keys(tool_call_args).length>0){
-                            result_one = await mcp_call_tool(
-                                tool_real_server_url,
-                                tool_real_name, //'get_date_diff',
-                                tool_call_args, //{date_from:'2025-01-01',date_to:'2025-01-10'}
-                                tool_headers
-                            )
-                        }
-                        else{
-                            result_one = await mcp_call_tool(
-                                tool_real_server_url,
-                                tool_real_name, //'get_date_diff',
-                                {},
-                                tool_headers
-                            )
-                        }
-                        console.log('[1296] result_one = ',result_one)  // TODO 还需要处理错误情况
-                        if(Array.isArray(result_one)){
-                            tool_result_one = result_one[0].result.content[0].text  
-                        }
-                        else{
-                            tool_result_one = result_one.result.content[0].text 
-                        }
-                        tool_result_one = `<name>${tool_call_name}</name>\n<args>${tool_call_args_json}</args>\n<result>${tool_result_one}</result>`
-                    }
-                    //
-                    // 将响应结果保存到变量 a
-                    console.log('[1307] 请求成功:', tool_result_one);
-                    lst_tool_result.push(tool_result_one);
-                    lst_tool_result_message.push({
-                        'role':'tool',
-                        'tool_call_id': tool_call_id,
-                        "content": tool_result_one
-                    });
-                    //
-                    if (MCP_MODE == 'agent'){  // 废弃
-                        round_tool_call = MAX_TOOL_CALL_ROUND + 1;  // agent成功之后，不再调用其他 
-                    }
-                } 
-                catch (error) {
-                    console.error('请求失败:', error);
+                    let agent_name = tool_call_one.function.arguments
+                    await on_tool_call_start(agent_name);
                 }
-                finally {
-                    await on_tool_call_end(tool_call_one);
+                catch (e) {
+                    console.log(`Line 761: ${e}`)
                 }
             }
-            console.log(`[1326] lst_tool_result = ${lst_tool_result}`)  // 正常工作
-            console.log(`[1327] lst_tool_result.length = ${lst_tool_result.length}`)  // 正常工作
-            console.log(`[1328] Type of lst_tool_result[0] is: ${typeof lst_tool_result[0]}`);
-
-            //
-            // 重新运行，获取大模型回复
-            console.log(`[1332] tool_name_cache = ${tool_name_cache}`);
-            //
-            if (tool_name_cache == 'get_tool_groups') {  // get_tool_groups 专用于获取工具组内详情
-                let second_list_tool = []
-                try{
-                    // console.log(`lst_tool_result[0] = `,lst_tool_result[0])
-                    // console.log(`lst_tool_result[0]['result'] = `,lst_tool_result[0]['result'])
-                    second_list_tool = JSON.parse(lst_tool_result[0])['result']['tools']
-                }
-                catch(e){
-                    console.log(`[1342] lst_tool_result['result'] = `,lst_tool_result['result'])
-                    second_list_tool = lst_tool_result['result']['tools']
-                }
-                //
-                await llmReplyStream({
-                    inp_str : 'null', 
-                    lst_msg : prompt_messages, 
-                    round_tool_call: round_tool_call + 1,
-                    lst_tools_input: second_list_tool,
-                    flags: flags
-                });
+            else { // normal mode
+                tool_call_name = tool_call_one.function.name
+                await on_tool_call_start(tool_call_name);
             }
-            else {  // 普通的工具调用，是真的要执行功能的
-                let prompt_messages_with_tool_result = [
-                    ...prompt_messages, 
-                    {
-                        "role":"assistant", 
-                        "content":"tool_calls", // 应该为空，但Gemini必须传入内容，否则报错.
-                        "tool_calls":lst_tool_call_quests
+            //
+            // Execute tool call
+            if (false) {
+                let MCP_RUN_URL = '';
+                MCP_RUN_URL = MCP_SERVER + '/mcp/call_tool'
+                json_body = JSON.stringify({
+                    name: tool_call_name,
+                    arguments: tool_call_one.function.arguments
+                })
+                console.log("json_body =", json_body)
+                const tool_call_response = await fetch(MCP_RUN_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
                     },
-                    ...lst_tool_result_message,
-                ];
-                //
-                console.log('[1368] prompt_messages_with_tool_result = ', prompt_messages_with_tool_result);
-                //
-                await llmReplyStream({
-                    inp_str : 'null', 
-                    lst_msg : prompt_messages_with_tool_result, 
-                    round_tool_call: round_tool_call + 1,
-                    flags: flags
+                    body: json_body
                 });
+
+                if (!tool_call_response.ok) {
+                    throw new Error('Network response abnormal');
+                }
+
+                tool_result_one = await tool_call_response.json();
             }
-        }
-        // 尾巴输出
-        if (flags.tail_printed){
-            // 尾巴输出过，就不再输出了
-        }
-        else{
-            if (result_whole.trim().length>0){
-                await print_tail();
-                flags.tail_printed = true;
+            else {
+                // let mcp_url = MCP_SERVER
+                let tool_call_args_json = tool_call_one.function.arguments
+                let tool_call_args = JSON.parse(tool_call_args_json)
+                let tool_real_name = openai_map[tool_call_name]['function_name']
+                let tool_real_server_url = openai_map[tool_call_name]['server_url']
+                let tool_headers = openai_map[tool_call_name]['headers'] || ''
+                //
+                console.log(`tool_real_server_url = ${tool_real_server_url}, tool_call_name = ${tool_call_name}, tool_real_name = ${tool_real_name}`)
+                console.log('tool_call_args = ', tool_call_args)
+                console.log('len = ', Object.keys(tool_call_args).length)
+                let result_one: any;
+                if (Object.keys(tool_call_args).length > 0) {
+                    result_one = await mcp_call_tool(
+                        tool_real_server_url,
+                        tool_real_name, //'get_date_diff',
+                        tool_call_args, //{date_from:'2025-01-01',date_to:'2025-01-10'}
+                        tool_headers
+                    )
+                }
+                else {
+                    result_one = await mcp_call_tool(
+                        tool_real_server_url,
+                        tool_real_name, //'get_date_diff',
+                        {},
+                        tool_headers
+                    )
+                }
+                console.log('[Line 934] result_one = ', result_one)  // TODO still need to handle error cases
+                if (Array.isArray(result_one)) {
+                    tool_result_one = result_one[0].result.content[0].text
+                }
+                else {
+                    tool_result_one = result_one.result.content[0].text
+                }
+                tool_result_one = `<name>${tool_call_name}</name>\n<args>${tool_call_args_json}</args>\n<result>${tool_result_one}</result>`
             }
-        }
-    }
-    // 如果输出解析失败的话
-    catch(err){
-        console.error('ERR531_in_utils.ts: ', err);
-    }
-    // 不管成功还是失败，都要执行的收尾工作
-    finally {
-        try {
-            await on_wait_end();
-        }
-        catch (err) {
             //
+            // Save response result to variable a
+            console.log('Request successful:', tool_result_one);
+            lst_tool_result.push(tool_result_one);
+            lst_tool_result_message.push({
+                'role': 'tool',
+                'tool_call_id': tool_call_id,
+                "content": tool_result_one
+            });
+            //
+            if (MCP_MODE == 'agent') {
+                round_tool_call = MAX_TOOL_CALL_ROUND + 1;  // After agent success, don't call others
+            }
+        }
+        catch (error) {
+            console.error('Request failed:', error);
+        }
+        finally {
+            await on_tool_call_end(tool_call_one);
+        }
+    }
+    console.log(`lst_tool_result = ${lst_tool_result}`)  // Working normally
+    console.log(`lst_tool_result.length = ${lst_tool_result.length}`)  // Working normally
+    console.log(`Type of lst_tool_result[0] is: ${typeof lst_tool_result[0]}`);
+
+    //
+    // Re-run to get LLM response
+    console.log(`tool_name_cache = ${tool_name_cache}`);
+    //
+    if (tool_name_cache == 'get_tool_groups') {  // get_tool_groups is specifically for getting tool group details
+        let second_list_tool = []
+        try {
+            // console.log(`lst_tool_result[0] = `,lst_tool_result[0])
+            // console.log(`lst_tool_result[0]['result'] = `,lst_tool_result[0]['result'])
+            second_list_tool = JSON.parse(lst_tool_result[0])['result']['tools']
+        }
+        catch (e) {
+            console.log(`lst_tool_result['result'] = `, lst_tool_result['result'])
+            second_list_tool = lst_tool_result['result']['tools']
         }
         //
-        try {
-            await on_think_end();
+        await llmReplyStream({
+            inp_str: 'null',
+            lst_msg: prompt_messages,
+            round_tool_call: round_tool_call + 1,
+            lst_tools_input: second_list_tool,
+            flags: flags
+        });
+    }
+    else {  // Normal tool call, actually executing functionality
+        let prompt_messages_with_tool_result = [
+            ...prompt_messages,
+            { 'role': 'user', 'content': `<tool_result> ${lst_tool_result} </tool_result>` }
+        ];
+        //
+        console.log('[1368] prompt_messages_with_tool_result = ', prompt_messages_with_tool_result);
+        //
+        await llmReplyStream({
+            inp_str: 'null',
+            lst_msg: prompt_messages_with_tool_result,
+            round_tool_call: round_tool_call + 1,
+            flags: flags
+        });
+    }
+}
+// Tail output
+if (flags.tail_printed) {
+    // Tail already printed, don't print again
+}
+else {
+    if (result_whole.trim().length > 0) {
+        await print_tail();
+        flags.tail_printed = true;
+    }
+}
         }
-        catch {
-            //
-        }
-        await on_before_return();
+        // If output parsing failed
+        catch (err) {
+    console.error('ERR531_in_utils.ts: ', err);
+}
+// Cleanup work to execute whether success or failure
+finally {
+    try {
+        await on_wait_end();
+    }
+    catch (err) {
+        //
+    }
+    //
+    try {
+        await on_think_end();
+    }
+    catch {
+        //
+    }
+    await on_before_return();
+}
     }
 }
 
 /**
- * 手动停止
+ * Manual stop
  */
 export async function llmReplyStop() {
     //
@@ -1399,7 +1365,7 @@ export async function llmReplyStop() {
     let llmSettingFlags = await joplin.settings.values(['llmFlagLlmRunning'])
     let is_running = parseInt(String(llmSettingFlags['llmFlagLlmRunning']));
     //
-    if (is_running == 1){ // 正在运行，强行停止
+    if (is_running == 1) { // Running, force stop
         await joplin.settings.setValue('llmFlagLlmRunning', 0);
         // alert('Force stopped!')
         // await joplin.commands.execute('editor.execCommand', {
@@ -1408,47 +1374,47 @@ export async function llmReplyStop() {
         //         floatId: 'llm_stop_1', ms: 3000, bgColor: COLOR_FLOAT.WARNING }]
         // });
         await add_short_floating(
-            `NoteLLM force stoped!`, 
-            get_random_floatid(), 
-            3000, 
+            `NoteLLM force stoped!`,
+            get_random_floatid(),
+            3000,
             COLOR_FLOAT.WARNING
         );
         return;
     }
-    else { // 并没有运行
+    else { // Not running
         // await joplin.commands.execute('editor.execCommand', {
         //     name: 'cm-tempFloatingObject',
         //     args: [{ text: `NoteLLM stoped.`, 
         //         floatId: 'llm_stop_0', ms: 3000, bgColor: COLOR_FLOAT.FINISH }]
         // });
         await add_short_floating(
-            `NoteLLM stoped.`, 
-            get_random_floatid(), 
-            3000, 
+            `NoteLLM stoped.`,
+            get_random_floatid(),
+            3000,
             COLOR_FLOAT.FINISH
         );
     }
 }
 
 /**
- * 切换 LLM 模型选项
- * @param llm_no 数字，代表了使用的模型序号
+ * Switch LLM model option
+ * @param llm_no Number representing the model index to use
  */
-export async function changeLLM(llm_no=0) {
-    let int_target_llm=0;
-    if (llm_no!=0){
+export async function changeLLM(llm_no = 0) {
+    let int_target_llm = 0;
+    if (llm_no != 0) {
         int_target_llm = llm_no;
     }
-    else{
+    else {
         let current_llm = await joplin.settings.values(['llmSelect']);
         let int_current_llm = parseInt(String(current_llm['llmSelect']));
-        if(int_current_llm==1){
+        if (int_current_llm == 1) {
             int_target_llm = 2
         }
-        else if(int_current_llm==3){
+        else if (int_current_llm == 3) {
             int_target_llm = 3
         }
-        else{
+        else {
             int_target_llm = 1
         }
     }
@@ -1475,39 +1441,39 @@ export async function changeLLM(llm_no=0) {
     }
 }
 
-export async function check_llm_status(show_ok=true){
+export async function check_llm_status(show_ok = true) {
     let test_result = 'OK';
     let apiModel = '';
     //
     try {
-        // 使用统一的参数读取函数
+        // Use unified parameter reading function
         const dict_llm = await get_llm_options();
 
-        // 提取各个参数
+        // Extract parameters
         apiModel = dict_llm['model'];
         const apiUrl = dict_llm['url'];
         const apiKey = dict_llm['key'];
         const int_target_llm = dict_llm['llmSelect'];
 
-        // 如果关键参数缺失，直接报错，不需要走后面的流程
-        if (apiModel.trim() === ''){
+        // If key parameters missing, report error directly without proceeding
+        if (apiModel.trim() === '') {
             test_result = 'Model Name is Empty?';
         }
-        else if(apiUrl.trim() === ''){
+        else if (apiUrl.trim() === '') {
             test_result = 'Model URL is Empty?';
         }
-        else if(apiKey.trim() === '') {
+        else if (apiKey.trim() === '') {
             test_result = 'Model Key is Empty?';
         }
         else {
-            // 测试连接
+            // Test connection
             try {
                 // let check = await testChatCompletion(apiUrl, apiKey, apiModel);
                 let check = await testListModels(apiUrl, apiKey);
-                if (check.available){
+                if (check.available) {
                     test_result = 'OK'
                 }
-                else{
+                else {
                     test_result = check.error;
                 }
             } catch {
@@ -1515,21 +1481,21 @@ export async function check_llm_status(show_ok=true){
             }
         }
 
-        if (test_result == 'OK'){
-            if (show_ok){
+        if (test_result == 'OK') {
+            if (show_ok) {
                 await add_short_floating(
-                    `LLM ${int_target_llm} Status: OK (Model = ${apiModel}) `, 
-                    get_random_floatid(), 
-                    3000, 
+                    `LLM ${int_target_llm} Status: OK (Model = ${apiModel}) `,
+                    get_random_floatid(),
+                    3000,
                     COLOR_FLOAT.FINISH
                 );
             }
         }
         else {
             await add_short_floating(
-                `LLM ${int_target_llm} Error: ${test_result} (Model = ${apiModel}) `, 
-                get_random_floatid(), 
-                4000, 
+                `LLM ${int_target_llm} Error: ${test_result} (Model = ${apiModel}) `,
+                get_random_floatid(),
+                4000,
                 COLOR_FLOAT.WARNING
             );
         }
@@ -1537,17 +1503,17 @@ export async function check_llm_status(show_ok=true){
     catch (err) {
         console.error('Error in check_llm_status:', err);
         await add_short_floating(
-            `LLM (Model = ${apiModel}) Server Connection Error: ${err}`, 
-            get_random_floatid(), 
-            4000, 
+            `LLM (Model = ${apiModel}) Server Connection Error: ${err}`,
+            get_random_floatid(),
+            4000,
             COLOR_FLOAT.WARNING
         );
     }
 }
 
-async function testListModels(baseURL:string, apiKey:string) {
+async function testListModels(baseURL: string, apiKey: string) {
     try {
-        let fixedURL= baseURL.replace("/chat/completions", '/models')
+        let fixedURL = baseURL.replace("/chat/completions", '/models')
         const response = await fetch(`${fixedURL}`, {
             headers: { 'Authorization': `Bearer ${apiKey}` }
         });
@@ -1567,7 +1533,7 @@ async function testListModels(baseURL:string, apiKey:string) {
                 status: response.status
             };
         }
-    } 
+    }
     catch (error) {
         return {
             available: false,
@@ -1576,8 +1542,8 @@ async function testListModels(baseURL:string, apiKey:string) {
     }
 };
 
-async function testChatCompletion(baseURL:string, apiKey:string, model:string) {
-  try {
+async function testChatCompletion(baseURL: string, apiKey: string, model: string) {
+    try {
         const response = await fetch(`${baseURL}`, {
             method: 'POST',
             headers: {
@@ -1597,7 +1563,7 @@ async function testChatCompletion(baseURL:string, apiKey:string, model:string) {
                 response: data.choices?.[0]?.message?.content || 'OK',
                 usage: data.usage
             };
-        } 
+        }
         else {
             const errorData = await response.json().catch(() => ({}));
             return {
@@ -1606,7 +1572,7 @@ async function testChatCompletion(baseURL:string, apiKey:string, model:string) {
                 status: response.status
             };
         }
-    } 
+    }
     catch (error) {
         return {
             available: false,
@@ -1615,11 +1581,11 @@ async function testChatCompletion(baseURL:string, apiKey:string, model:string) {
     }
 }
 
-async function mcp_get_tools_restful(MCP_SERVER_URL_RESTFUL:string) {
+async function mcp_get_tools_restful(MCP_SERVER_URL_RESTFUL: string) {
     let openai_tools = await fetch(MCP_SERVER_URL_RESTFUL)
         .then(mcp_response => {
             if (!mcp_response.ok) {
-            throw new Error('MCP_网络响应失败');
+                throw new Error('MCP_网络响应失败');
             }
             return mcp_response.json(); // 如果返回的是 JSON 数据
         })
@@ -1630,7 +1596,7 @@ async function mcp_get_tools_restful(MCP_SERVER_URL_RESTFUL:string) {
         .catch(error => {
             console.error('MCP_请求失败:', error);  // 服务器未启动，或者连接错误等，都会走到这里
             // 可以添加 on_mcp_error 函数
-            return {'tools': []}  // 
+            return { 'tools': [] }  // 
         });
     return openai_tools;
 }
