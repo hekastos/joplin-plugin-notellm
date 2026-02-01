@@ -731,81 +731,126 @@ export async function llmReplyStream({
     //
     //
     let dict_res_all = {
-        "res_whole": "",
-        "res_content": "",
-        "res_tool": "",
-        "res_think": "",
-        "finist_reason": "",
-        "delta_content": "",
-        "delta_think": "",
-        "delta_tool": "",
+        "response_whole":"",
+        //
+        "content_whole":"",
+        "content_delta":"",
+        //
+        "tool_whole":"",
+        "tool_delta":"",
+        //
+        "think_whole":"",
+        "think_delta":"",
         "thinking_status": "not_started",
         "think_word_start": "",
+        "flag_think_part_exists": false,
+        //
+        "finish_reason":"",
     }
     /**
-     * split openai-api response
-     * 
      * 拆解AI回复文本，找到思考部分、文本部分。
+     * 
+     * split openai-api response
      * 
      * 依赖于 外部变量 dict_res_all。
      * 
-     * @param str_delta_parsed 
+     * @param str_delta_content 内容部分的增量
+     * @param str_delta_think 思考部分的增量
      */
-    function response_split_stream(str_delta_parsed: string) {
+    function response_split_stream(str_delta_content:string, str_delta_think:string="", finish_reason = null){
         //
-        dict_res_all['res_whole'] += str_delta_parsed;
+        console.log(
+            '[760] str_delta_content =', str_delta_content,
+            ', str_delta_think = ',str_delta_think,
+            ', finish_reason = ', finish_reason,
+        );
+        dict_res_all['finish_reason'] = finish_reason;
+        dict_res_all['response_whole'] += str_delta_content;
+        str_delta_think === null ? '' : str_delta_think;
+        //
+        if (dict_res_all['flag_think_part_exists']){ // 如果存在独立的思考部分
+            if (str_delta_content.trim().length >0) { // 如果有内容
+                dict_res_all['thinking_status'] = 'think_end';
+                if (dict_res_all['think_delta'].length > 0){
+                    if (dict_res_all['think_whole'].endsWith(dict_res_all['think_delta'])){
+                        dict_res_all['think_delta'] = '';
+                    }
+                    else {
+                        dict_res_all['think_whole'] += dict_res_all['think_delta'];
+                        dict_res_all['think_delta'] = '';
+                    }
+                }
+            }
+            else if(str_delta_think.trim().length>0) {
+                dict_res_all['thinking_status'] = 'think_start';
+                dict_res_all['think_whole'] = dict_res_all['think_whole'] + str_delta_think;
+                dict_res_all['think_delta'] = str_delta_think;
+            }
+        }
+        else {
+            if(str_delta_think.trim().length>0) {
+                dict_res_all['flag_think_part_exists'] = true
+                dict_res_all['thinking_status'] = 'think_start';
+                dict_res_all['think_whole'] = dict_res_all['think_whole'] + str_delta_think;
+                dict_res_all['think_delta'] = str_delta_think;
+            }
+        }
         //
         const METHOD_TYPE: string = 'METHOD_2';
         //
-        if (METHOD_TYPE === 'METHOD_1') { // 最简单版本，找开头词语、结束词语
+        if (METHOD_TYPE === 'METHOD_1') { // 最简单版本，找开头词语、结束词语。测试功能正常，但较弱。
             const WORD_THINK_START = '<think>';
             const WORD_THINK_END = '</think>';
-            const lastOpen = dict_res_all['res_whole'].indexOf(WORD_THINK_START);
-            const lastClose = dict_res_all['res_whole'].indexOf(WORD_THINK_END);
+            const lastOpen = dict_res_all['response_whole'].indexOf(WORD_THINK_START);
+            const lastClose = dict_res_all['response_whole'].indexOf(WORD_THINK_END);
             //
             if (lastOpen >= 0) { // 如果存在思考
-                if (lastClose > 0 && lastClose > lastOpen) {  // 思考完成
-                    let str_think = dict_res_all['res_whole'].slice(lastOpen + WORD_THINK_START.length, lastClose);
-                    let str_content = dict_res_all['res_whole'].slice(lastClose + WORD_THINK_END.length);
+                if (lastClose > 0 && lastClose > lastOpen){  // 思考完成
+                    let str_think = dict_res_all['response_whole'].slice(lastOpen + WORD_THINK_START.length, lastClose);
+                    let str_content = dict_res_all['response_whole'].slice(lastClose + WORD_THINK_END.length);
                     str_content = str_content.replace(/^\n+/g, ''); // 避免解析出来的 content 以回车开头
-                    dict_res_all['delta_think'] = str_think.startsWith(dict_res_all['res_think']) ? str_think.slice(dict_res_all['res_think'].length) : null; // 
-                    dict_res_all['res_think'] = str_think;
-                    dict_res_all['delta_content'] = str_content.startsWith(dict_res_all['res_content']) ? str_content.slice(dict_res_all['res_content'].length) : null; // 
-                    dict_res_all['res_content'] = str_content;
+                    dict_res_all['think_delta'] = str_think.startsWith(dict_res_all['think_whole']) ? str_think.slice(dict_res_all['think_whole'].length) : ''; // 
+                    dict_res_all['think_whole'] = str_think;
+                    dict_res_all['content_delta'] = str_content.startsWith(dict_res_all['content_whole']) ? str_content.slice(dict_res_all['content_whole'].length) : null; // 
+                    dict_res_all['content_whole'] = str_content;
                     dict_res_all['thinking_status'] = 'think_end';
                 }
                 else { // 思考中
-                    let str_think = dict_res_all['res_whole'].slice(lastOpen + WORD_THINK_START.length, lastClose);
-                    dict_res_all['delta_think'] = str_think.startsWith(dict_res_all['res_think']) ? str_think.slice(dict_res_all['res_think'].length) : null; // 
-                    dict_res_all['res_think'] = str_think;
+                    let str_think = dict_res_all['response_whole'].slice(lastOpen + WORD_THINK_START.length, lastClose);
+                    dict_res_all['think_delta'] = str_think.startsWith(dict_res_all['think_whole']) ? str_think.slice(dict_res_all['think_whole'].length) : null; // 
+                    dict_res_all['think_whole'] = str_think;
                     dict_res_all['thinking_status'] = 'think_start';
                 }
             }
             else { // 一开始就没有思考的话
-                dict_res_all['res_content'] += str_delta_parsed;
-                dict_res_all['delta_content'] = str_delta_parsed;
+                dict_res_all['content_whole'] += str_delta_content;
+                dict_res_all['content_delta'] = str_delta_content;
                 dict_res_all['thinking_status'] = 'think_end';
             }
             //
             // 避免 content 以回车开头
-            dict_res_all['res_content'] = dict_res_all['res_content'].replace(/^\n+/g, '');
+            dict_res_all['content_whole'] = dict_res_all['content_whole'].replace(/^\n+/g, '');
         }
         // //
-        else if (METHOD_TYPE === 'METHOD_2') { // 方法2：逐行判断
+        else if (METHOD_TYPE === 'METHOD_2') { // 方法2：逐行判断，已测试功能正常
             //
+            // 已经在思考结束状态下
             if (dict_res_all.thinking_status === 'think_end') {
-                dict_res_all['res_content'] += str_delta_parsed;
-                if (dict_res_all['res_content'].startsWith('\n')) {
-                    dict_res_all['res_content'] = dict_res_all['res_content'].trimStart();
-                    dict_res_all['delta_content'] = str_delta_parsed.trimStart();
+                // if (dict_res_all['content_whole'].startsWith('\n')){
+                if (dict_res_all['content_whole'].trim().length < 1 && str_delta_content.startsWith('\n')){
+                    dict_res_all['content_whole'] += str_delta_content.trimStart();
+                    // dict_res_all['content_whole'] = dict_res_all['content_whole'].trimStart();
+                    dict_res_all['content_delta'] = str_delta_content.trimStart();
                 }
                 else {
-                    dict_res_all['delta_content'] = str_delta_parsed;
+                    dict_res_all['content_whole'] += str_delta_content;
+                    dict_res_all['content_delta'] = str_delta_content;
                 }
             }
+            // 还没开始，或者思考中
             else {
                 // 按 \n 分割，并移除首尾空白
-                const segments = dict_res_all.res_whole.split('\n').map(s => s.trim());
+                const segments = dict_res_all.response_whole.split('\n').map(s => s.trim());
                 // 逐行遍历
                 let lastOpenLineIndex = -1;
                 let lastCloseLineIndex = -1;
@@ -823,8 +868,8 @@ export async function llmReplyStream({
                         }
                         else { // 出现其他开头，说明不需要思考
                             dict_res_all.thinking_status = 'think_end';
-                            dict_res_all.res_content += segments[i];
-                            dict_res_all.delta_content = segments[i];
+                            dict_res_all.content_whole += segments[i];
+                            dict_res_all.content_delta = segments[i];
                             break;
                         }
                     }
@@ -836,10 +881,12 @@ export async function llmReplyStream({
                             if (segments[i] === '</think>') {
                                 lastCloseLineIndex = i + 1; // 为了think包括当前词汇
                                 dict_res_all.thinking_status = 'think_end';
-                                let segments_origional = dict_res_all.res_whole.split('\n');
-                                let str_think = segments_origional.slice(lastOpenLineIndex, lastCloseLineIndex - 1).join("");
-                                dict_res_all['delta_think'] = str_think.startsWith(dict_res_all['res_think']) ? str_think.slice(dict_res_all['res_think'].length) : null; // 
-                                dict_res_all['res_think'] = str_think;
+                                let segments_origional = dict_res_all.response_whole.split('\n');
+                                let str_think = segments_origional.slice(lastOpenLineIndex, lastCloseLineIndex-1).join("");
+                                if (!dict_res_all['flag_think_part_exists']){
+                                    dict_res_all['think_delta'] = str_think.startsWith(dict_res_all['think_whole']) ? str_think.slice(dict_res_all['think_whole'].length) : ''; // 
+                                    dict_res_all['think_whole'] = str_think;
+                                }
                                 break;
                             }
                         }
@@ -848,10 +895,12 @@ export async function llmReplyStream({
                                 if (!segments[i].startsWith('>') && segments[i].length > 0 && segments[i - 1].startsWith('>')) {
                                     lastCloseLineIndex = i;
                                     dict_res_all.thinking_status = 'think_end';
-                                    let segments_origional = dict_res_all.res_whole.split('\n');
+                                    let segments_origional = dict_res_all.response_whole.split('\n');
                                     let str_think = segments_origional.slice(lastOpenLineIndex, lastCloseLineIndex).join("");
-                                    dict_res_all['delta_think'] = str_think.startsWith(dict_res_all['res_think']) ? str_think.slice(dict_res_all['res_think'].length) : null; // 
-                                    dict_res_all['res_think'] = str_think;
+                                    if (!dict_res_all['flag_think_part_exists']){
+                                        dict_res_all['think_delta'] = str_think.startsWith(dict_res_all['think_whole']) ? str_think.slice(dict_res_all['think_whole'].length) : ''; // 
+                                        dict_res_all['think_whole'] = str_think;
+                                    }
                                     break;
                                 }
                             }
@@ -865,33 +914,37 @@ export async function llmReplyStream({
                 // 进入此处的条件是 进入的时候尚未处于 think_end
                 if (dict_res_all.thinking_status == 'think_end') { // 不处于思考
                     // 找到增量的思考部分与内容部分
-                    let segments_origional = dict_res_all.res_whole.split('\n');
-                    let str_think: string = '';
-                    if (dict_res_all.think_word_start === '<think>') {
-                        str_think = segments_origional.slice(lastOpenLineIndex, lastCloseLineIndex - 1).join("");
+                    let segments_origional = dict_res_all.response_whole.split('\n');
+                    let str_think:string='';
+                    if (dict_res_all.think_word_start === '<think>'){
+                        str_think = segments_origional.slice(lastOpenLineIndex, lastCloseLineIndex-1).join("");
                     }
                     else if (dict_res_all.think_word_start === '*Thinking...*') {
                         str_think = segments_origional.slice(lastOpenLineIndex, lastCloseLineIndex).join("");
                     }
                     let str_content = segments_origional.slice(lastCloseLineIndex).join("");
                     str_content = str_content.replace(/^\n+/g, ''); // 避免解析出来的 content 以回车开头
-                    dict_res_all['delta_think'] = str_think.startsWith(dict_res_all['res_think']) ? str_think.slice(dict_res_all['res_think'].length) : null; // 
-                    dict_res_all['res_think'] = str_think;
-                    dict_res_all['delta_content'] = str_content.startsWith(dict_res_all['res_content']) ? str_content.slice(dict_res_all['res_content'].length) : null; // 
-                    dict_res_all['res_content'] = str_content;
+                    if (!dict_res_all['flag_think_part_exists']){
+                        dict_res_all['think_delta'] = str_think.startsWith(dict_res_all['think_whole']) ? str_think.slice(dict_res_all['think_whole'].length) : ''; // 
+                        dict_res_all['think_whole'] = str_think;
+                    }
+                    dict_res_all['content_delta'] = str_content.startsWith(dict_res_all['content_whole']) ? str_content.slice(dict_res_all['content_whole'].length) : ''; // 
+                    dict_res_all['content_whole'] = str_content;
                     console.log('[869] dict_res_all = ', JSON.stringify(dict_res_all, null, 2))
                 }
-                else if (dict_res_all.thinking_status == 'think_start') { // 结尾 thinking
-                    let segments_origional = dict_res_all.res_whole.split('\n');
+                else if (dict_res_all.thinking_status == 'think_start'){ // 结尾 thinking
+                    let segments_origional = dict_res_all.response_whole.split('\n');
                     let str_think = segments_origional.slice(lastOpenLineIndex, lastCloseLineIndex).join("");
-                    dict_res_all['delta_think'] = str_think.startsWith(dict_res_all['res_think']) ? str_think.slice(dict_res_all['res_think'].length) : null; // 
-                    dict_res_all['res_think'] = str_think;
+                    if (!dict_res_all['flag_think_part_exists']){
+                        dict_res_all['think_delta'] = str_think.startsWith(dict_res_all['think_whole']) ? str_think.slice(dict_res_all['think_whole'].length) : ''; // 
+                        dict_res_all['think_whole'] = str_think;
+                    }
                 }
             }
         }
         //
         console.log('[880] dict_res_all = ', JSON.stringify(dict_res_all, null, 2))
-        return dict_res_all['delta_content'];
+        return dict_res_all['content_delta'];
     }
     //
     let reply_type = 'unknown';  // Type classification for this request (tool call or not)
@@ -1010,34 +1063,89 @@ export async function llmReplyStream({
                             }
                         }
                         //}
-                        else { //if (reply_type == 'content') {  // If text reply (usually)
-                            // Process content
-                            let delta_content = parsed.choices[0]?.delta?.content || '';
+                        else { //if (reply_type == 'content') {  // 如果是文本回复 (通常)
+                            // 处理 content 内容
+                            let delta_content = str_json_parsed.choices[0]?.delta?.content || '';
+                            let delta_think = str_json_parsed.choices[0]?.delta?.reasoning_content || '';
+                            delta_think += str_json_parsed.choices[0]?.delta?.reasoning || '';
+                            let finish_reason = str_json_parsed.choices[0]?.delta?.reasoning || null;
+                            let delta_content_result = response_split_stream(delta_content, delta_think, finish_reason);
+                            // console.info('[909] str_json_parsed = ', str_json_parsed)
+                            // console.info('[910] delta_content_result = ', delta_content_result)
                             //
-                            if (['<think>', '<THINK>'].indexOf(delta_content.trim()) !== -1) {
-                                thinking_status = 'thinking'
-                                // 
-                                // Visualize waiting during thinking
-                                if (hide_thinking) {
+                            // 判断思考状态，不涉及输出
+                            let THINK_ANI:string = 'METHOD_2';
+                            if (THINK_ANI === 'METHOD_1') {
+                                if (thinking_status === 'not_started') {
+                                    //
+                                    // only when startswith <think>
+                                    if (['<think>', '<THINK>'].includes(delta_content.trim())){  // 判定依据是这两个关键词，有些脆弱  TODO
+                                        thinking_status = 'thinking'
+                                        // 
+                                        // 思考期间的等待可视化
+                                        if (hide_thinking){
+                                            await on_think_start();
+                                            continue;
+                                        }
+                                    }
+                                    else if (delta_content.trim().startsWith('<think>')) {
+                                        // 特例：工具调用等情况下，直接将完整版发来了，也属于这种情况
+                                        const endIndex = delta_content.indexOf('</think>');
+                                        if (endIndex !== -1){
+                                            if (hide_thinking){
+                                                delta_content = delta_content.trim().replace(/^<think>[\s\S]*?<\/think>\n\n/, '');
+                                                thinking_status = 'think_finished';
+                                            }
+                                        }
+                                    }
+                                    else{
+                                        // 如果不是 <think> 开头，说明不是推理模式，直接跳过
+                                        // 特例：工具调用等情况下，直接将完整版发来了，也属于这种情况
+                                        thinking_status = 'think_finished';
+                                    }
+                                }
+                                else if(thinking_status === 'thinking') {  // 如果已经在思考中了
+                                    if (['</think>', '</THINK>'].includes(delta_content.trim())){  // 结束思考的标志
+                                        thinking_status = 'think_ends';
+                                        await on_think_end();
+                                    }
+                                    if (hide_thinking){
+                                        continue;
+                                    }
+                                } 
+                                else if (thinking_status === 'think_ends'){
+                                    if(delta_content.trim() === ''){
+                                        if (hide_thinking){
+                                            continue;
+                                        }
+                                    }
+                                    else if (delta_content.trim().length > 0){
+                                        thinking_status = 'think_finished';
+                                        await on_think_end();
+                                        if (hide_thinking){
+                                            delta_content = delta_content.trim();
+                                        }
+                                    }
+                                }
+                                else if (thinking_status === 'think_finished') {
+                                    // 思考已经结束，会进入这里
+                                }
+                            }
+                            else if (THINK_ANI === 'METHOD_2') {
+                                if (dict_res_all['thinking_status'] === 'think_start'){
                                     await on_think_start();
-                                    continue;
+                                }
+                                else if (dict_res_all['thinking_status'] === 'think_end') {
+                                    await on_think_end();
                                 }
                             }
-                        }
-                    else if (thinking_status === 'thinking') {  // If already thinking
-                            if (['</think>', '</THINK>'].indexOf(delta_content.trim()) !== -1) {  // End thinking marker
-                                thinking_status = 'think_ends';
-                                await on_think_end();
+                            //
+                            // 获取 content 全体
+                            if (hide_thinking){
+                                output_str = dict_res_all['content_whole'];
                             }
-                            if (hide_thinking) {
-                                continue;
-                            }
-                        }
-                        else if (thinking_status === 'think_ends') {
-                            if (delta_content.trim() === '') {
-                                if (hide_thinking) {
-                                    continue;
-                                }
+                            else {
+                                output_str = dict_res_all['response_whole'];
                             }
                             else if (delta_content.trim().length > 0) {
                                 thinking_status = 'think_finished';
@@ -1185,8 +1293,11 @@ else if (reply_type == 'tool_calls') {  // Cleanup type: tool call mode
                     let agent_name = tool_call_one.function.arguments
                     await on_tool_call_start(agent_name);
                 }
-                catch (e) {
-                    console.log(`Line 761: ${e}`)
+                else{  // 正常情况，由程序输出结束语
+                    let n_tail_match = dict_res_all['content_whole'].match(/[\r\n]+$/)
+                    let n_enter_tail = n_tail_match ? n_tail_match[0].length : 0;
+                    await print_tail(n_enter_tail);
+                    flags.tail_printed = true;
                 }
             }
             else { // normal mode
